@@ -1,8 +1,10 @@
 use std::{fs::{remove_file, File}, io::Write, time::SystemTime};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CommitLog {
-    log_file: (String, File),
+    dir: String,
+    file_name: String,
+    file: File,
 }
 
 impl CommitLog {
@@ -13,11 +15,14 @@ impl CommitLog {
 
         match SystemTime::now().elapsed() {
             Ok(n) => {
-                let filename = format!("{}/commit_{}.log", dir, n.as_millis());
-                let file = File::create(&filename).map_err(|e| e.to_string())?;
+                let file_name = format!("commit_{}.log", n.as_millis());
+                let filepath = format!("{}/{}", dir, &file_name);
+                let file = File::create(&filepath).map_err(|e| e.to_string())?;
 
                 Ok(CommitLog {
-                log_file: (filename, file),
+                    dir: dir.to_string(),
+                    file_name,
+                    file,
             })},
             Err(_) => Err("SystemTime before UNIX EPOCH!".to_string()),
         }
@@ -27,12 +32,24 @@ impl CommitLog {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())
     }
 
+    pub fn try_clone(&self) -> Result<Self, String> {
+        let file = self.file.try_clone();
+        match file {
+            Ok(f) => Ok(CommitLog {
+                dir: self.dir.clone(),
+                file_name: self.file_name.clone(),
+                file: f,
+            }),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     // bufを入れてもいい
     // ページサイズを超えるようであれば、パディングを入れてもいい
     // 全てパフォーマンスを計測してから決める
     fn append(&mut self, entry: &CommitLogEntry) {
         let buf = entry.encode();
-        self.log_file.1.write_all(&buf).unwrap();
+        self.file.write_all(&buf).unwrap();
     }
 
     pub fn write_put(&mut self, key: &str, value: &str) {
@@ -40,9 +57,18 @@ impl CommitLog {
         self.append(&entry);
     }
 
-    pub fn delete_log() -> Result<(), String> {
-        remove_file("commit.log").map_err(|e| e.to_string())
+    pub fn delete_log(&self) -> Result<(), String> {
+        remove_file(&self.get_file_path()).map_err(|e| e.to_string())
     }
+
+    pub fn get_file_path(&self) -> String {
+        format!("{}/{}", self.dir, self.file_name)
+    }
+
+    pub fn get_dir(&self) -> &str {
+        &self.dir
+    }
+
 }
 
 pub struct CommitLogEntry {

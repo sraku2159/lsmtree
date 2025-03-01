@@ -1,4 +1,6 @@
-use crate::commitlog::CommitLogEntry;
+use std::path::Path;
+
+use crate::commitlog::{CommitLog, CommitLogEntry};
 
 /*
 ------------------------------------------------------------------------
@@ -67,4 +69,13 @@ fn test_cl_delete_encode_key_utf8() {
         6, 0, 0, 0, 0, 0, 0, 0,      // arg0_len: 6
         227, 130, 173, 227, 131, 188 // arg0: "キー"
     ]);
+}
+
+
+#[test]
+fn test_cl_delete_log_file() {
+    let dir = "/tmp";
+    let commit_log = CommitLog::new(dir).unwrap();
+    commit_log.delete_log().unwrap();
+    assert!(!Path::new(&commit_log.get_file_path()).exists());
 }
