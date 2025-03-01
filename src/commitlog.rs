@@ -1,5 +1,4 @@
-use core::time;
-use std::{fs::{remove_file, File}, io::Write, os::unix::fs::MetadataExt, path::Path};
+use std::{fs::{remove_file, File}, io::Write};
 
 pub struct CommitLog {
     log_file: (String, File),
@@ -68,9 +67,7 @@ impl CommitLogEntry {
         match self.cmd {
             CommitLogCmd::Put => {
                 let mut buf = Vec::new();
-                buf.push(0u8);
-                // 文字列の長さではなく、文字列で使用したバイト長を使う
-                // 修正が必要
+                buf.push(1u8);
                 buf.extend_from_slice(&self.key.len().to_ne_bytes());
                 buf.extend_from_slice(self.key.as_bytes());
                 buf.extend_from_slice(&self.value.clone().unwrap().len().to_ne_bytes());
@@ -79,7 +76,7 @@ impl CommitLogEntry {
             }
             CommitLogCmd::Delete => {
                 let mut buf = Vec::new();
-                buf.push(1u8);
+                buf.push(2u8);
                 buf.extend_from_slice(&self.key.len().to_ne_bytes());
                 buf.extend_from_slice(self.key.as_bytes());
                 buf
@@ -89,7 +86,7 @@ impl CommitLogEntry {
 }
 
 pub enum CommitLogCmd {
-    Put,
+    Put = 1,
     Delete,
 }
 
