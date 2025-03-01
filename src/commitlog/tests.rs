@@ -11,7 +11,7 @@ DELETE: 2
 */ 
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn test_put_encode() {
+fn test_cl_put_encode() {
     let entry = CommitLogEntry::new("PUT", "key", Some("value"));
     let buf = entry.encode();
     assert_eq!(buf, vec![
@@ -24,7 +24,7 @@ fn test_put_encode() {
 }
 
 #[test]
-fn test_utf8() {
+fn test_cl_utf8() {
     let value = "バリュー";
     let value_bytes = value.as_bytes();
 
@@ -33,7 +33,7 @@ fn test_utf8() {
 
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn test_put_encode_key_utf8() {
+fn test_cl_put_encode_key_utf8() {
     let entry = CommitLogEntry::new("PUT", "キー", Some("バリュー"));
     let buf = entry.encode();
     assert_eq!(buf, vec![
@@ -47,7 +47,7 @@ fn test_put_encode_key_utf8() {
 
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn test_delete_encode() {
+fn test_cl_delete_encode() {
     let entry = CommitLogEntry::new("DELETE", "key", None);
     let buf = entry.encode();
     assert_eq!(buf, vec![
@@ -59,7 +59,7 @@ fn test_delete_encode() {
 
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn test_delete_encode_key_utf8() {
+fn test_cl_delete_encode_key_utf8() {
     let entry = CommitLogEntry::new("DELETE", "キー", None);
     let buf = entry.encode();
     assert_eq!(buf, vec![
