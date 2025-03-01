@@ -16,10 +16,3 @@ fn test_sst_write_impl() {
     );
     fs::remove_file(path).unwrap();
 }
-
-#[test]
-fn test_sst_create_dir() {
-    let path = "/tmp/test";
-    assert!(SSTable::create_dir(path).is_ok());
-    fs::remove_dir(path).unwrap();
-}

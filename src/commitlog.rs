@@ -1,5 +1,7 @@
 use std::{fs::{remove_file, File}, io::Write, time::SystemTime};
 
+use crate::utils;
+
 #[derive(Debug)]
 pub struct CommitLog {
     dir: String,
@@ -9,27 +11,15 @@ pub struct CommitLog {
 
 impl CommitLog {
     pub fn new(dir: &str) -> Result<CommitLog, String> {
-        if std::fs::metadata(dir).map(|m| m.is_dir()).unwrap_or(false) {
-            Self::create_dir(dir)?;
-        }
-
-        match SystemTime::now().elapsed() {
-            Ok(n) => {
-                let file_name = format!("commit_{}.log", n.as_millis());
-                let filepath = format!("{}/{}", dir, &file_name);
-                let file = File::create(&filepath).map_err(|e| e.to_string())?;
-
-                Ok(CommitLog {
-                    dir: dir.to_string(),
-                    file_name,
-                    file,
-            })},
-            Err(_) => Err("SystemTime before UNIX EPOCH!".to_string()),
-        }
-    }
-
-    fn create_dir(dir: &str) -> Result<(), String> {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())
+        let now = utils::get_timestamp();
+        let file_name = format!("commit_{}.log", now);
+        let filepath = format!("{}/{}", dir, &file_name);
+        let file = File::create(&filepath).map_err(|e| e.to_string())?;
+        Ok(CommitLog {
+            dir: dir.to_string(),
+            file_name,
+            file,
+        })
     }
 
     pub fn try_clone(&self) -> Result<Self, String> {

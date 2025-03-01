@@ -1,6 +1,7 @@
 use super::SSTable;
 use super::Compaction;
 
+#[derive(Debug)]
 pub struct SizeTieredCompaction {
 }
 
