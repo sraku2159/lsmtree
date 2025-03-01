@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
+type Key = String;
+type Value = String;
+
 #[derive(Debug, Clone)]
 pub struct MemTable {
-    data: BTreeMap<String, String>, 
+    data: BTreeMap<Key, Value>, 
 }
 
 impl MemTable {
@@ -12,15 +15,15 @@ impl MemTable {
         }
     }
 
-    pub fn put(&mut self, key: &str, value: &str) -> Option<String> {
+    pub fn put(&mut self, key: &str, value: &str) -> Option<Value> {
         self.data.insert(key.to_string(), value.to_string())
     }
 
-    pub fn delete(&mut self, key: &str) -> Option<String> {
+    pub fn delete(&mut self, key: &str) -> Option<Value> {
         self.data.remove(key)
     }
 
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Option<Value> {
         self.data.get(key).map(|value| value.to_string())
     }
 
@@ -44,11 +47,11 @@ impl MemTable {
 }
 
 struct MemtableIterator<'a> {
-    pub iter: std::collections::btree_map::Iter<'a, String, String>,
+    pub iter: std::collections::btree_map::Iter<'a, Key, Value>,
 }
 
 impl<'a> Iterator for MemtableIterator<'a> {
-    type Item = (String, String);
+    type Item = (Key, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|(key, value)| (key.clone(), value.clone()))

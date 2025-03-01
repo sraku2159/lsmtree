@@ -1,19 +1,30 @@
-use std::{fs::{remove_file, File}, io::Write};
+use std::{fs::{remove_file, File}, io::Write, time::SystemTime};
 
+#[derive(Debug, Clone)]
 pub struct CommitLog {
     log_file: (String, File),
 }
 
 impl CommitLog {
-    pub fn new(filename: Option<String>) -> Result<CommitLog, String> {
-        let filename = filename.unwrap_or("commit.log".to_string());
-        let file = File::create(&filename);
-        match file {
-            Ok(f) => Ok(CommitLog {
-                log_file: (filename, f),
-            }),
-            Err(e) => Err(e.to_string()),
+    pub fn new(dir: &str) -> Result<CommitLog, String> {
+        if std::fs::metadata(dir).map(|m| m.is_dir()).unwrap_or(false) {
+            Self::create_dir(dir)?;
         }
+
+        match SystemTime::now().elapsed() {
+            Ok(n) => {
+                let filename = format!("{}/commit_{}.log", dir, n.as_millis());
+                let file = File::create(&filename).map_err(|e| e.to_string())?;
+
+                Ok(CommitLog {
+                log_file: (filename, file),
+            })},
+            Err(_) => Err("SystemTime before UNIX EPOCH!".to_string()),
+        }
+    }
+
+    fn create_dir(dir: &str) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())
     }
 
     // bufを入れてもいい
@@ -28,11 +39,9 @@ impl CommitLog {
         let entry = CommitLogEntry::new("PUT", key, Some(value));
         self.append(&entry);
     }
-}
 
-impl Drop for CommitLog {
-    fn drop(&mut self) {
-        remove_file(self.log_file.0.clone()).unwrap();
+    pub fn delete_log() -> Result<(), String> {
+        remove_file("commit.log").map_err(|e| e.to_string())
     }
 }
 
