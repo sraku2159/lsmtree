@@ -34,8 +34,6 @@ impl MemTable {
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for (key, value) in self.data.iter() {
-            // 文字列の長さではなく、文字列で使用したバイト長を使う
-            // 修正が必要
             buf.extend_from_slice(&key.len().to_ne_bytes());
             buf.extend_from_slice(key.as_bytes());
             buf.extend_from_slice(&value.len().to_ne_bytes());
