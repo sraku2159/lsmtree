@@ -37,16 +37,32 @@ impl MemTable {
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for (key, value) in self.data.iter() {
-            buf.extend_from_slice(&key.len().to_ne_bytes());
-            buf.extend_from_slice(key.as_bytes());
-            buf.extend_from_slice(&value.len().to_ne_bytes());
-            buf.extend_from_slice(value.as_bytes());
+            buf.extend_from_slice(&Self::encode_key_value(key, value));
         }
         buf
     }
+
+    pub fn encode_key_value(key: &str, value: &str) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&key.len().to_ne_bytes());
+        buf.extend_from_slice(key.as_bytes());
+        buf.extend_from_slice(&value.len().to_ne_bytes());
+        buf.extend_from_slice(value.as_bytes());
+        buf
+    }
+
+    pub fn iter(&self) -> MemtableIterator {
+        MemtableIterator {
+            iter: self.data.iter(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
-struct MemtableIterator<'a> {
+pub struct MemtableIterator<'a> {
     pub iter: std::collections::btree_map::Iter<'a, Key, Value>,
 }
 

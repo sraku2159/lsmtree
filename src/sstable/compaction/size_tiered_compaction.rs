@@ -1,4 +1,4 @@
-use super::SSTable;
+use super::SSTableReader;
 use super::Compaction;
 
 #[derive(Debug)]
@@ -13,7 +13,7 @@ impl SizeTieredCompaction {
 }
 
 impl Compaction for SizeTieredCompaction {
-    fn compact(sstable: &SSTable) {
+    fn compact(sstable: &SSTableReader) {
         unimplemented!();
     }
 }

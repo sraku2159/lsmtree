@@ -7,7 +7,7 @@ use std::{fmt::Debug, thread::spawn};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
-use sstable::{SSTable, compaction::Compaction};
+use sstable::{compaction::Compaction,  SSTableWriter};
 
 use utils::*;
 
@@ -121,13 +121,20 @@ impl<T: Compaction + Debug + Send> LSMTree<T> {
     }
 
     fn flush_memtable(dir: &str, memtable: MemTable) -> Result<(), String> {
-        let sstable = SSTable::new(dir)?;
+        let sstable = SSTableWriter::new(dir)?;
         sstable.write(&memtable)?;
         Ok(())
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        self.memtable.get(key)
+        match self.memtable.get(key) {
+            Some(value) => Some(value.clone()),
+            None => {
+                unimplemented!();
+                // let sstable = SSTableWriter::new(&self.sst_dir).unwrap();
+                // sstable.read(key)
+            }
+        }
     }
 
     pub fn get_memtable(&self) -> &MemTable {
