@@ -12,7 +12,7 @@ pub struct SSTableReader {
 
 impl SSTableReader {
     pub fn new(file: &str) -> Result<SSTableReader, String> {
-        let mut buf = vec![0u8; 24];
+        let mut buf = vec![0u8; 16];
         // 1. fileの存在チェック
         if !std::path::Path::new(file).exists() {
             return Err(format!("{} not found", file));
@@ -57,40 +57,35 @@ mod tests{
     #[test]
     fn test_sst_reader_new() {
         let path = "/tmp/test_sst_reader_new.sst";
-        let file_size = 24u64;
         let header_size = 8u64;
         let index_size = 8u64;
         let data = vec![
-            file_size.to_be_bytes().to_vec(),
-            header_size.to_be_bytes().to_vec(),
-            index_size.to_be_bytes().to_vec(),
+            header_size.to_ne_bytes().to_vec(),
+            index_size.to_ne_bytes().to_vec(),
         ].concat();
-    
+
         fs::write(
             path, 
             data
         ).unwrap();
-    
+
         let sst_reader = SSTableReader::new(path).unwrap();
         assert_eq!(sst_reader.file, path);
-        assert_eq!(sst_reader.header.file_size, file_size);
         assert_eq!(sst_reader.header.header_size, header_size);
         assert_eq!(sst_reader.header.index_size, index_size);
     
         fs::remove_file(path).unwrap();
     }
-    
+
     #[test]
     fn test_sst_reader_new_with_some_data() {
         let path = "/tmp/test_sst_reader_new_with_some_data.sst";
-        let file_size = 24u64;
         let header_size = 8u64;
         let index_size = 8u64;
         let data = vec![
-            file_size.to_be_bytes().to_vec(),
-            header_size.to_be_bytes().to_vec(),
-            index_size.to_be_bytes().to_vec(),
-            (0..256).map(|i: i32| i.to_be_bytes().to_vec()).flatten().collect::<Vec<u8>>(),
+            header_size.to_ne_bytes().to_vec(),
+            index_size.to_ne_bytes().to_vec(),
+            (0..256).map(|i: i32| i.to_ne_bytes().to_vec()).flatten().collect::<Vec<u8>>(),
         ].concat();
     
         fs::write(
@@ -100,10 +95,9 @@ mod tests{
     
         let sst_reader = SSTableReader::new(path).unwrap();
         assert_eq!(sst_reader.file, path);
-        assert_eq!(sst_reader.header.file_size, file_size);
         assert_eq!(sst_reader.header.header_size, header_size);
         assert_eq!(sst_reader.header.index_size, index_size);
-    
+
         fs::remove_file(path).unwrap();
     }    
 }

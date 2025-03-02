@@ -38,11 +38,12 @@ fn test_sst_index_from_page_size_data() {
 fn test_sst_index_from_data_crossing_page_size() {
     let mut memtable = MemTable::new();
     memtable.put("1", "a".repeat(get_page_size()).as_str());
-    memtable.put("2", "b".repeat(get_page_size() / 2).as_str());
     memtable.put("3", "c".repeat(get_page_size()).as_str());
-    memtable.put("4", "d");
+    memtable.put("2", "b".repeat(get_page_size() / 2).as_str());
+    memtable.put("キー4", "d");
 
     let sst_index = SSTableIndex::from(&memtable);
+
     assert_eq!(sst_index.0.len(), 3);
     assert_eq!(
         sst_index.get(&"1".to_owned()).unwrap(), 
@@ -53,7 +54,30 @@ fn test_sst_index_from_data_crossing_page_size() {
         &(get_page_size() as u64 + 17u64)
     );
     assert_eq!(
-        sst_index.get(&"4".to_owned()).unwrap(),
+        sst_index.get(&"キー4".to_owned()).unwrap(),
         &(get_page_size() as u64 * 2 + 51u64 + get_page_size() as u64 / 2u64)
     );
+}
+
+#[test]
+fn test_sst_index_encode() {
+    let mut vec = vec![
+        ("c", 1000u64),
+        ("a", 0u64),
+        ("b", 3u64),
+    ];
+    let mut sst_index = SSTableIndex::new();
+
+    vec.iter().for_each(|(key, offset)| {
+        sst_index.insert((*key).to_owned(), *offset);
+    });
+    let encoded = sst_index.encode();
+    let mut buf = Vec::new();
+    vec.sort();
+    for (key, offset) in vec.iter() {
+        buf.extend_from_slice(&key.len().to_ne_bytes());
+        buf.extend_from_slice(key.as_bytes());
+        buf.extend_from_slice(&offset.to_ne_bytes());
+    }
+    assert_eq!(encoded, buf);
 }
