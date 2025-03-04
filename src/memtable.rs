@@ -20,6 +20,8 @@ impl MemTable {
     }
 
     pub fn delete(&mut self, key: &str) -> Option<Value> {
+        // ここ修正
+        // データ型をOption<Value>に変更し、Noneをinsertするように修正
         self.data.remove(key)
     }
 
