@@ -1,9 +1,16 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::{collections::BTreeMap, fmt::Display, ops::Index};
 
 type Key = String;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Data(String),
+    /*
+    Tombstone: 削除されたデータを表す
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        0,
+    empty string:
+        0, 0, 0, 0, 0, 0, 0, 0, // key_len: 0
+     */
     Tombstone,
 }
 
