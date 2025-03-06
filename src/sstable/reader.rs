@@ -45,6 +45,11 @@ impl SSTableReader {
             .seek(std::io::SeekFrom::Start(header.header_size))
             .map_err(|e| e.to_string())?;
         unimplemented!();
+        // 1. ファイルのヘッダーからインデックスの位置 と サイズを取得
+        // 2. インデックスを2部探索でkeyを探す
+        // 3. keyが見つかったら、データの位置とサイズを取得
+        // 4. データを読み込む
+        // 5. データをデコードして返す
     }
 }
 

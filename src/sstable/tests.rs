@@ -81,3 +81,11 @@ fn test_sst_index_encode() {
     }
     assert_eq!(encoded, buf);
 }
+
+#[test]
+fn test_sst_from_data() {
+    let mut data = SSTableData::new();
+    data.extend_from_slice(&[
+        
+    ]);
+}

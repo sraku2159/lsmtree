@@ -117,7 +117,7 @@ impl<T: Compaction + Debug + Send> LSMTree<T> {
                 }
             });
         }
-        Ok(ret) 
+        Ok(ret.map(|v| v.to_string()))
     }
 
     fn flush_memtable(dir: &str, memtable: MemTable) -> Result<(), String> {
@@ -128,7 +128,7 @@ impl<T: Compaction + Debug + Send> LSMTree<T> {
 
     pub fn get(&self, key: &str) -> Option<Value> {
         match self.memtable.get(key) {
-            Some(value) => Some(value.clone()),
+            Some(value) => Some(value.to_string().clone()),
             None => {
                 unimplemented!();
                 // let sstable = SSTableWriter::new(&self.sst_dir).unwrap();

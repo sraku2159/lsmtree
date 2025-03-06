@@ -30,6 +30,7 @@ impl SSTableWriter {
         Self::write_data_impl(&mut file, &mut data)
     }
 
+    // コンパクションを考えると、データから作成する方が良い
     fn write_index_impl(file: &mut File, index: &SSTableIndex) -> Result<(), String> {
         let mut index = index.encode();
         file.write_all(&mut index).map_err(|e| e.to_string())

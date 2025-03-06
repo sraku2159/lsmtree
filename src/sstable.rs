@@ -104,7 +104,7 @@ impl From<&MemTable> for SSTableIndex {
                 offset %= page_size;
                 index.0.insert(k.clone(), page_size * page_cnt + offset);
             }
-            offset += MemTable::encode_key_value(&k, &v).len() as u64;
+            offset += MemTable::encode_key_value(&k, &v.to_string()).len() as u64;
         }
         index
     }

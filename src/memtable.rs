@@ -1,7 +1,20 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Display};
 
 type Key = String;
-type Value = String;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Data(String),
+    Tombstone,
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Data(data) => write!(f, "{}", data),
+            Value::Tombstone => write!(f, "\u{0}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct MemTable {
@@ -16,30 +29,30 @@ impl MemTable {
     }
 
     pub fn put(&mut self, key: &str, value: &str) -> Option<Value> {
-        self.data.insert(key.to_string(), value.to_string())
+        self.data.insert(key.to_string(), Value::Data(value.to_string()))
     }
 
     pub fn delete(&mut self, key: &str) -> Option<Value> {
-        // ここ修正
-        // データ型をOption<Value>に変更し、Noneをinsertするように修正
-        self.data.remove(key)
+        self.data.insert(key.to_string(), Value::Tombstone)
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        self.data.get(key).map(|value| value.to_string())
+        self.data.get(key).map(|value| {
+            value.clone()
+        })
     }
 
     pub fn len(&self) -> usize {
         let iter = MemtableIterator {
             iter: self.data.iter(),
         };
-        iter.fold(0, |acc, val| acc + val.0.len() + val.1.len())
+        iter.fold(0, |acc, val| acc + val.0.len() + val.1.to_string().len())
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for (key, value) in self.data.iter() {
-            buf.extend_from_slice(&Self::encode_key_value(key, value));
+            buf.extend_from_slice(&Self::encode_key_value(key, &value.to_string()));
         }
         buf
     }

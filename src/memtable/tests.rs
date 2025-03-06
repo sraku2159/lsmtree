@@ -9,7 +9,7 @@ fn test_mt_len() {
     memtable.put("key2", "value3");
     assert_eq!(memtable.len(), 20);
     memtable.delete("key1");
-    assert_eq!(memtable.len(), 10);
+    assert_eq!(memtable.len(), 15);
 }
 
 #[test]
@@ -53,4 +53,34 @@ fn test_mt_encode() {
             227, 131, 144, 227, 131, 170, 227, 131, 165, 227, 131, 188 // value: "バリュー"
         ]
     );
+    memtable.delete("1");
+    assert_eq!(
+        memtable.encode(),
+        vec![
+            1, 0, 0, 0, 0, 0, 0, 0,                                    // key_len: 1
+            49,                                                        // key: "1"
+            1, 0, 0, 0, 0, 0, 0, 0,                                    // value_len: 1
+            0,                                                        // value: "a"
+
+            3, 0, 0, 0, 0, 0, 0, 0,                                    // key_len: 3
+            50, 51, 52,                                                // key: "234"
+            3, 0, 0, 0, 0, 0, 0, 0,                                    // value_len: 3
+            98, 99, 100,                                               // value: "bcd"
+
+            6, 0, 0, 0, 0, 0, 0, 0,                                    // key_len: 6
+            227, 130, 173, 227, 131, 188,                              // key: "キー"
+            12, 0, 0, 0, 0, 0, 0, 0,                                   // value_len: 9  
+            227, 131, 144, 227, 131, 170, 227, 131, 165, 227, 131, 188 // value: "バリュー"
+        ]
+    );
+}
+
+#[test]
+fn test_mt_delete() {
+    let mut memtable = MemTable::new();
+    memtable.put("key1", "value1");
+    assert_eq!(memtable.get("key1"), Some(Value::Data("value1".to_owned())));
+
+    memtable.delete("key1");
+    assert_eq!(memtable.get("key1"), Some(Value::Tombstone));
 }
