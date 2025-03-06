@@ -13,6 +13,19 @@ fn test_mt_len() {
 }
 
 #[test]
+fn test_mt_len_empty() {
+    let mut memtable = MemTable::new();
+    memtable.put("key1", "");
+    let encoded = memtable.encode();
+    println!("{:?}", encoded);
+
+    memtable.delete("key1");
+    let encoded = memtable.encode();
+    println!("{:?}", encoded);
+}
+
+
+#[test]
 fn test_mt_len_dup() {
     let mut memtable = MemTable::new();
     memtable.put("key1", "value2");
