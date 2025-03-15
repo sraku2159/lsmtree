@@ -10,8 +10,6 @@ fn get_key_and_offset_len(num: usize) -> usize {
     num * 16
 }
 
-// 修正必要
-// オフセットはファイルの先頭からのバイト数である
 #[test]
 fn test_sst_index_from_memtable() {
     let mut memtable = memtable::MemTable::new();
@@ -154,7 +152,7 @@ fn test_sst_index_tryfrom_data_page_size_data() {
 
 #[test]
 fn test_sst_index_tryfrom_data_crossing_page_size() {
-    let data = vec![
+    let data = SSTableData::from(vec![
         vec![
             1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
             49, // key: "1"
@@ -179,7 +177,7 @@ fn test_sst_index_tryfrom_data_crossing_page_size() {
             1, 0, 0, 0, 0, 0, 0, 0, // value_len: 1
             100, // value: "d"
         ],
-    ].concat();
+    ].concat());
 
     let index = SSTableIndex::try_from(&data).unwrap();
     let index_size = get_key_and_offset_len(3) + "12キー4".len() ;
@@ -226,4 +224,48 @@ fn test_sst_index_encode() {
         buf.extend_from_slice(&offset.to_ne_bytes());
     }
     assert_eq!(encoded, buf);
+}
+
+#[test]
+fn test_sst_data_iter() {
+    let mut data = SSTableData::new();
+    data.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        97, // key: "a"
+        1, 0, 0, 0, 0, 0, 0, 0, // value_len: 1
+        49, // value: "1"
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        98, // key: "b"
+        1, 0, 0, 0, 0, 0, 0, 0, // value_len: 1
+        50, // value: "2"
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        99, // key: "c"
+        1, 0, 0, 0, 0, 0, 0, 0, // value_len: 1
+        51, // value: "3"
+    ]);
+
+    let mut iter = data.iter();
+
+    assert_eq!(
+        iter.next().map(|(k, v)| (
+            String::from_utf8(k.to_vec()).unwrap(), 
+            String::from_utf8(v.to_vec()).unwrap())
+        ),
+        Some(("a".to_owned(), "1".to_owned()))
+    );
+    assert_eq!(
+        iter.next().map(|(k, v)| (
+            String::from_utf8(k.to_vec()).unwrap(), 
+            String::from_utf8(v.to_vec()).unwrap())
+        ),
+        Some(("b".to_owned(), "2".to_owned()))
+    );
+    assert_eq!(
+        iter.next().map(|(k, v)| (
+            String::from_utf8(k.to_vec()).unwrap(), 
+            String::from_utf8(v.to_vec()).unwrap())
+        ),
+        Some(("c".to_owned(), "3".to_owned()))
+    );
+    assert_eq!(iter.next(), None);
 }

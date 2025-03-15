@@ -24,10 +24,10 @@ impl SSTableWriter {
     fn write_impl(memtable: &MemTable, file: &str) -> Result<(), String> {
         let mut file = File::create(file).map_err(|e| e.to_string())?;
         let index = SSTableIndex::from(memtable);
-        let mut data = memtable.encode();
+        let data = SSTableData::from(memtable.encode());
         Self::write_header_impl(&mut file, &index, &data)?;
         Self::write_index_impl(&mut file, &index)?;
-        Self::write_data_impl(&mut file, &mut data)
+        Self::write_data_impl(&mut file, &data)
     }
 
     // コンパクションを考えると、データから作成する方が良い
@@ -47,8 +47,10 @@ impl SSTableWriter {
         file.write_all(&header).map_err(|e| e.to_string())
     }
 
-    fn write_data_impl(file: &mut File, data: &mut Vec<u8>) -> Result<(), String> {
-        file.write_all(data).map_err(|e| e.to_string())
+    // ページサイズごとに書き込むという方法との比較を時間計算量の観点で今後したい
+    fn write_data_impl(file: &mut File, data: &SSTableData) -> Result<(), String> {
+        let mut data =  data.raw_data().clone();
+        file.write_all(&mut data).map_err(|e| e.to_string())
     }
 }
 
@@ -179,7 +181,7 @@ mod tests {
         memtable.put("key1", "value1");
         let path = "/tmp/test_sst_writer_wirte_data_impl.sst";
         let mut file = File::create(path).unwrap();
-        let mut data = memtable.encode();
+        let mut data = SSTableData::from(memtable.encode());
         assert!(SSTableWriter::write_data_impl(&mut file, &mut data).is_ok());
         
         let content = fs::read_to_string(path).unwrap();

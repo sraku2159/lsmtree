@@ -7,6 +7,7 @@ type Value = String;
 type Offset = u64;
 
 use std::{collections::{BTreeMap, HashMap}, vec};
+use chrono::offset;
 pub use reader::SSTableReader;
 pub use writer::SSTableWriter;
 
@@ -131,10 +132,6 @@ impl FromIterator<(Key, Offset)> for SSTableIndex {
     }
 }
 
-// ページサイズごとにインデックスを作成する
-// もし、Valueでページサイズを超えた場合、超えたValueのKeyをインデックスに追加する
-// 修正必要
-// オフセットはファイルの先頭からのオフセット
 impl From<&MemTable> for SSTableIndex {
     fn from(memtable: &MemTable) -> SSTableIndex {
         if memtable.is_empty() {
@@ -165,60 +162,109 @@ impl TryFrom<&SSTableData> for SSTableIndex {
     type Error = String;
 
     fn try_from(data: &SSTableData) -> Result<Self, Self::Error> {
-        
-        fn get_key_len(data: &[u8], offset: usize) -> u64 {
-            u64::from_ne_bytes(data[offset..(offset + 8)]
-                .try_into()
-                .map_err(|e: std::array::TryFromSliceError| e.to_string())
-                .unwrap())
-        }
-
-        fn get_key(data: &[u8], offset: usize, key_len: u64) -> String {
-            String::from_utf8(data[offset..(offset + key_len as usize)].to_vec())
-                .map_err(|e| e.to_string())
-                .unwrap()
-        }
-
-        fn get_value_len(data: &[u8], offset: usize) -> u64 {
-            u64::from_ne_bytes(data[offset..(offset + 8)]
-                .try_into()
-                .map_err(|e: std::array::TryFromSliceError| e.to_string())
-                .unwrap())
-        }
-
-        fn get_value(data: &[u8], offset: usize, value_len: u64) -> String {
-            String::from_utf8(data[offset..(offset + value_len as usize)].to_vec())
-                .map_err(|e| e.to_string())
-                .unwrap()
-        }
-
-        unimplemented!();
-        // ここから
-
-        let mut index = SSTableIndex::new();
-
-        let mut offset = 0;
-        let mut page_cnt = 0;
-        let page_size = get_page_size();
-        while offset < data.len() {
-            let key_len = get_key_len(data, offset) as usize;
-            let data_len = get_value_len(data, offset + key_len + 8) as usize;
-            // if offset  {}
-            offset += 8;
-            let key = get_key(data, offset, key_len as u64);
-            offset += key_len;
-            let value = u64::from_ne_bytes(data[offset..(offset + 8)]
-                .try_into()
-                .map_err(|e: std::array::TryFromSliceError| e.to_string())
-                .unwrap());
-            offset += 8;
-            index.insert(key, value);
-        }
-        Ok(index)
+        unimplemented!()
     }
 }
 
-type SSTableData = Vec<u8>;
+// type SSTableData = Vec<u8>;
+
+#[derive(Debug)]
+struct SSTableData{
+    data: Vec<u8>,
+}
+
+impl SSTableData {
+    fn new() -> SSTableData {
+        SSTableData {
+            data: Vec::new(),
+        }
+    }
+
+    fn extend_from_slice(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
+    }
+
+    fn size(&self) -> u64 {
+        self.iter().fold(0, |acc, (k, v)| {
+            acc + k.len() as u64 + v.len() as u64
+        })
+    }
+
+    // raw data length
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    fn raw_data(&self) -> &Vec<u8> {
+        &self.data
+    }
+
+    fn iter(&self) -> SSTableDataIterator {
+        SSTableDataIterator {
+            data: &self.data,
+            offset: 0,
+        }
+    }
+
+    fn get_key_len(&self, offset: usize) -> Result<u64, String> {
+        let data = &self.data[offset..(offset + 8)]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| e.to_string())?;
+        Ok(u64::from_ne_bytes(*data))
+    }
+}
+
+impl From<&[u8]> for SSTableData {
+    fn from(data: &[u8]) -> SSTableData {
+        SSTableData {
+            data: data.to_vec(),
+        }
+    }
+}
+
+impl From<Vec<u8>> for SSTableData {
+    fn from(data: Vec<u8>) -> SSTableData {
+        SSTableData {
+            data,
+        }
+    }
+}
+
+impl From<&Vec<u8>> for SSTableData {
+    fn from(data: &Vec<u8>) -> SSTableData {
+        SSTableData {
+            data: data.clone(),
+        }
+    }
+}
+
+pub struct SSTableDataIterator<'a> {
+    data: &'a Vec<u8>,
+    offset: usize,
+}
+
+impl<'a> Iterator for SSTableDataIterator<'a> {
+    type Item = (&'a [u8], &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.data.len() {
+            return None;
+        }
+        let key_len = u64::from_ne_bytes(self.data[self.offset..(self.offset + 8)]
+            .try_into()
+            .unwrap());
+        self.offset += 8;
+        let key = &self.data[self.offset..(self.offset + key_len as usize)];
+        self.offset += key_len as usize;
+        let value_len = u64::from_ne_bytes(self.data[self.offset..(self.offset + 8)]
+            .try_into()
+            .unwrap());
+        self.offset += 8;
+        let value = &self.data[self.offset..(self.offset + value_len as usize)];
+        self.offset += value_len as usize;
+        Some((key, value))
+    }
+}
 
 #[cfg(test)]
 mod tests;
