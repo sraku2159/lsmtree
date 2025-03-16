@@ -3,11 +3,10 @@ pub mod reader;
 pub mod writer;
 
 type Key = String;
-type Value = String;
+type Value = Option<String>;
 type Offset = u64;
 
-use std::{collections::{BTreeMap, HashMap}, vec};
-use chrono::offset;
+use std::{collections::BTreeMap, fmt, ops::Index, path::Display, vec};
 pub use reader::SSTableReader;
 pub use writer::SSTableWriter;
 
@@ -66,7 +65,9 @@ impl SSTableIndex {
             buf.extend_from_slice(&key.len().to_ne_bytes());
             buf.extend_from_slice(key.as_bytes());
             buf.extend_from_slice(&offset.to_ne_bytes());
+            println!("key: {}, offset: {}", key, offset);
         }
+        println!("buf: {:?}", buf);
         buf
     }
 
@@ -162,107 +163,382 @@ impl TryFrom<&SSTableData> for SSTableIndex {
     type Error = String;
 
     fn try_from(data: &SSTableData) -> Result<Self, Self::Error> {
-        unimplemented!()
+        let keys = data.get_first_keys();
+        let index_size = keys.iter().fold(0, |acc, k| {
+            acc + k.len() as u64 + 2 * std::mem::size_of::<Offset>() as u64
+        });
+        let mut index = SSTableIndex::new();
+        let mut accm = index_size + SSTableHeader::SIZE;
+        keys.iter().enumerate().for_each(|(i, k)| {
+            index.insert(k.clone(), accm);
+            accm += data.chunk_len(i) as u64;
+        });
+
+        Ok(index)
     }
 }
 
-// type SSTableData = Vec<u8>;
-
-#[derive(Debug)]
+// 一つのSSTableにおけるデータを表す
+// データの重複はありえない
+/// memtableから作成される (memtable内でデータの重複は起こり得ない)
+// ページサイズでデータを分割するが、原則ページサイズを超えないようにしたい
+/// 例外として、Valueが大きい場合はページサイズを超えることもある
+/// ページサイズ程度のデータを格納することを目指す
+/// 
+/// N.B.
+//// 同じファイル内にインデックスやヘッダーが存在する場合、それらのサイズを考慮しないと正しいチャンクにならないが、今回は考慮しない
+/// 
+// SSTableDataはSSTableのデータのキャッシュ的な立ち位置として振る舞う
+/// SSTable自体はイミュータブルなので、これに対する更新は起きない
+/// TODO: キャッシュとしての振る舞いを実装する
 struct SSTableData{
-    data: Vec<u8>,
+    chunks: Vec<SSTableRecords>,
 }
 
 impl SSTableData {
     fn new() -> SSTableData {
         SSTableData {
-            data: Vec::new(),
+            chunks: vec![],
         }
     }
 
-    fn extend_from_slice(&mut self, data: &[u8]) {
-        self.data.extend_from_slice(data);
+    pub fn encode(&self) -> Vec<u8> {
+        self.chunks.iter().fold(vec![], |acc, chunk| {
+            chunk.iter().fold(acc, |mut acc, record| {
+                acc.extend_from_slice(&record.encode());
+                acc
+            })
+        })
     }
 
-    fn size(&self) -> u64 {
-        self.iter().fold(0, |acc, (k, v)| {
-            acc + k.len() as u64 + v.len() as u64
+    pub fn decode(data: &[u8]) -> Result<SSTableData, String> {
+        let mut offset = 0;
+        let mut chunks = vec![];
+        let threadhold = get_page_size();
+        while offset < data.len() {
+            let (records, size) = SSTableRecords::decode(
+                    &data[offset..], 
+                    threadhold)
+                .map_err(|e| e.to_string())?;
+            chunks.push(records);
+            offset += size;
+        }
+        Ok(SSTableData {
+            chunks,
         })
+    }
+
+    fn get_first_keys(&self) -> Vec<Key> {
+        self.chunks.iter().map(|chunk| {
+            chunk.0[0].0.clone()
+        }).collect()
     }
 
     // raw data length
     fn len(&self) -> usize {
-        self.data.len()
+        self.chunks.iter().fold(0, |acc, chunk| {
+            acc + chunk.size()
+        })
     }
 
-    fn raw_data(&self) -> &Vec<u8> {
-        &self.data
+    fn chunk_len(&self, index: usize) -> usize {
+        self.chunks[index].size()
     }
 
-    fn iter(&self) -> SSTableDataIterator {
+    pub fn get(&self, key: &Key, hint: Option<Offset>) -> Option<&Value> {
+        if let Some(hint) = hint {
+            if let Some(value) = self.chunks[hint as usize].get(key) {
+                return Some(value);
+            }
+        }
+        self.binary_search_get(key)
+    }
+
+    fn brute_force_get(&self, key: &Key) -> Option<&Value> {
+        for chunk in &self.chunks {
+            for record in &chunk.0 {
+                if record.0 == *key {
+                    return Some(record.value());
+                }
+            }
+        }
+        None
+    }
+
+    // [left, right)
+    // mid <= key < mid + 1 → chunk.get(mid)
+    fn binary_search_get(&self, key: &Key) -> Option<&Value> {
+        let mut left = 0;
+        let mut right = self.chunks.len();
+        while left < right {
+            let mid = (left + right) / 2;
+            let mid_letf_chunk_first_key = self.chunks[mid][0usize].key();
+            let mid_right_chunk_first_key = if mid + 1 < self.chunks.len() {
+                Some(self.chunks[mid + 1][0usize].key())
+            } else {
+                None
+            };
+            if mid_letf_chunk_first_key <= key && mid_right_chunk_first_key.map_or(true, |k| key < k) {
+                return self.chunks[mid].get(key);
+            }
+            if mid_letf_chunk_first_key > key {
+                right = mid;
+            } else {
+                left = mid + 1;
+            }
+        }
+        None
+    }
+
+    pub fn iter(&self) -> SSTableDataIterator {
         SSTableDataIterator {
-            data: &self.data,
-            offset: 0,
-        }
-    }
-
-    fn get_key_len(&self, offset: usize) -> Result<u64, String> {
-        let data = &self.data[offset..(offset + 8)]
-            .try_into()
-            .map_err(|e: std::array::TryFromSliceError| e.to_string())?;
-        Ok(u64::from_ne_bytes(*data))
-    }
-}
-
-impl From<&[u8]> for SSTableData {
-    fn from(data: &[u8]) -> SSTableData {
-        SSTableData {
-            data: data.to_vec(),
+            chunks: &self.chunks,
+            index: (0, 0),
         }
     }
 }
 
-impl From<Vec<u8>> for SSTableData {
-    fn from(data: Vec<u8>) -> SSTableData {
-        SSTableData {
-            data,
+impl fmt::Debug for SSTableData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for i in 0..self.chunks.len() {
+            writeln!(f, "chunk{}: chunk_len={}, chunk_size={}", i, self.chunk_len(i), self.chunks[i].size())?;
+            writeln!(f, "{:?}", self.chunks[i])?;
         }
+        Ok(())
     }
 }
 
-impl From<&Vec<u8>> for SSTableData {
-    fn from(data: &Vec<u8>) -> SSTableData {
-        SSTableData {
-            data: data.clone(),
-        }
+impl TryFrom<&[u8]> for SSTableData {
+    type Error = String;
+
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+        Self::decode(data)
+    }
+}
+
+impl TryFrom<Vec<u8>> for SSTableData {
+    type Error = String;
+
+    fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
+        Self::decode(&data)
+    }
+}
+
+impl TryFrom<&Vec<u8>> for SSTableData {
+    type Error = String;
+
+    fn try_from(data: &Vec<u8>) -> Result<Self, Self::Error> {
+        Self::decode(data)
     }
 }
 
 pub struct SSTableDataIterator<'a> {
-    data: &'a Vec<u8>,
-    offset: usize,
+    chunks: &'a Vec<SSTableRecords>,
+    index: (usize, usize),
 }
 
 impl<'a> Iterator for SSTableDataIterator<'a> {
-    type Item = (&'a [u8], &'a [u8]);
+    type Item = &'a SSTableRecord;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset >= self.data.len() {
+        if self.index.0 >= self.chunks.len() {
             return None;
         }
-        let key_len = u64::from_ne_bytes(self.data[self.offset..(self.offset + 8)]
+        let record = &self.chunks[self.index.0][self.index.1];
+        self.index.1 += 1;
+        if self.index.1 >= self.chunks[self.index.0].len() {
+            self.index.0 += 1;
+            self.index.1 = 0;
+        }
+        Some(record)
+    }
+}
+
+struct SSTableRecords(Vec<SSTableRecord>);
+
+impl SSTableRecords {
+    fn new() -> SSTableRecords {
+        SSTableRecords(vec![])
+    }
+
+    // RawDataを作成したら、traitで作成
+    fn encode(&self) -> Vec<u8> {
+        self.0.iter().fold(vec![], |mut acc, record| {
+            acc.extend_from_slice(&record.encode());
+            acc
+        })
+    }
+
+    fn decode(data: &[u8], threadhold: usize) -> Result<(Self, usize), String> {
+        let mut offset = 0;
+        let mut records = Self::new();
+        // TODO: ファイルフォーマットの見直し
+        while offset < data.len() {
+            let (record, record_size) = SSTableRecord::decode(&data[offset..])
+                .map_err(|e| e.to_string())?;
+            let ret = records.push(record, threadhold);
+            if ret.is_err() {
+                break;
+            }
+            offset += record_size;
+        }
+        Ok((records, offset))
+    }
+
+    fn iter(&self) -> SSTableRecordsIterator {
+        SSTableRecordsIterator {
+            iter: self.0.iter(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn size(&self) -> usize {
+        self.0.iter().fold(0, |acc, record| {
+            acc + record.size()
+        })
+    }
+
+    fn get(&self, key: &Key) -> Option<&Value> {
+        self.binary_search_get(key)
+    }
+
+    // [left, right)
+    fn binary_search_get(&self, key: &Key) -> Option<&Value> {
+        let mut left = 0;
+        let mut right = self.0.len();
+        while left < right {
+            let mid = (left + right) / 2;
+            let record = &self.0[mid];
+            if record.0 == *key {
+                return Some(record.value());
+            }
+            if record.0 < *key {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        None
+    }
+
+    fn push(&mut self, record: SSTableRecord, threadhold: usize) -> Result<(), String> {
+        if self.size() >= threadhold {
+            return Err("page is full".to_owned());
+        }
+        self.0.push(record);
+        Ok(())
+    }
+}
+
+impl fmt::Debug for SSTableRecords {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for record in &self.0 {
+            writeln!(f, "{:?}", record)?;
+        }
+        Ok(())
+    }
+}
+
+impl Index<usize> for SSTableRecords {
+    type Output = SSTableRecord;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl Index<&usize> for SSTableRecords {
+    type Output = SSTableRecord;
+
+    fn index(&self, index: &usize) -> &Self::Output {
+        &self.0[*index]
+    }
+}
+
+impl Index<u64> for SSTableRecords {
+    type Output = SSTableRecord;
+
+    fn index(&self, index: u64) -> &Self::Output {
+        &self.0[index as usize]
+    }
+}
+
+impl Index<&u64> for SSTableRecords {
+    type Output = SSTableRecord;
+
+    fn index(&self, index: &u64) -> &Self::Output {
+        &self.0[*index as usize]
+    }
+}
+
+pub struct SSTableRecordsIterator<'a> {
+    iter: std::slice::Iter<'a, SSTableRecord>,
+}
+
+impl<'a> Iterator for SSTableRecordsIterator<'a> {
+    type Item = &'a SSTableRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SSTableRecord(Key, Value);
+
+impl SSTableRecord {
+    fn new(key: Key, value: Value) -> SSTableRecord {
+        SSTableRecord(key, value)
+    }
+
+    fn key(&self) -> &Key {
+        &self.0
+    }
+
+    fn value(&self) -> &Value {
+        &self.1
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let default_value = "".to_owned();
+        let value = self.1.as_ref().unwrap_or(&default_value);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.0.len().to_ne_bytes());
+        buf.extend_from_slice(self.0.as_bytes());
+        buf.extend_from_slice(&value.len().to_ne_bytes());
+        buf.extend_from_slice(value.as_bytes());
+        buf
+    }
+
+    fn decode(data: &[u8]) -> Result<(SSTableRecord, usize), String> {
+        let key_len = u64::from_ne_bytes(data[0..8]
             .try_into()
-            .unwrap());
-        self.offset += 8;
-        let key = &self.data[self.offset..(self.offset + key_len as usize)];
-        self.offset += key_len as usize;
-        let value_len = u64::from_ne_bytes(self.data[self.offset..(self.offset + 8)]
+            .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+        let key = String::from_utf8(data[8..(8 + key_len as usize)].to_vec())
+            .map_err(|e| e.to_string())?;
+        let value_len = u64::from_ne_bytes(data[(8 + key_len as usize)..(16 + key_len as usize)]
             .try_into()
-            .unwrap());
-        self.offset += 8;
-        let value = &self.data[self.offset..(self.offset + value_len as usize)];
-        self.offset += value_len as usize;
-        Some((key, value))
+            .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+        let value = String::from_utf8(data[(16 + key_len as usize)..(16 + key_len as usize + value_len as usize)].to_vec())
+            .map(|s| {
+                if s == "" {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        let len = std::mem::size_of::<u64>() * 2 + key_len as usize + value_len as usize;
+        Ok((SSTableRecord(key, value), len))
+    }
+
+    fn size(&self) -> usize {
+        self.0.len()
+            + self.1.as_ref().map_or(0, |v| v.len())
+            + std::mem::size_of::<u64>() * 2
     }
 }
 
