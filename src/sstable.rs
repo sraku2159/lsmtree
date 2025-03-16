@@ -65,9 +65,7 @@ impl SSTableIndex {
             buf.extend_from_slice(&key.len().to_ne_bytes());
             buf.extend_from_slice(key.as_bytes());
             buf.extend_from_slice(&offset.to_ne_bytes());
-            println!("key: {}, offset: {}", key, offset);
         }
-        println!("buf: {:?}", buf);
         buf
     }
 
