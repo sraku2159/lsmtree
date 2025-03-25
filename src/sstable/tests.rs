@@ -257,8 +257,8 @@ fn test_sst_index_decode() {
 }
 
 #[test]
-fn test__sst_index_find_key_range() {
-    let mut vec = vec![
+fn test_sst_index_find_key_range() {
+    let vec = vec![
         ("c", 1000u64),
         ("a", 0u64),
         ("e", 2000u64),
