@@ -237,6 +237,26 @@ fn test_sst_index_encode() {
 }
 
 #[test]
+fn test_sst_index_decode() {
+    let encoded = vec![
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        97, // key: "a"
+        0, 0, 0, 0, 0, 0, 0, 0, // offset: 0
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        98, // key: "b"
+        3, 0, 0, 0, 0, 0, 0, 0, // offset: 3
+        1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
+        99, // key: "c"
+        232, 3, 0, 0, 0, 0, 0, 0, // offset: 1000
+    ];
+    let decoded = SSTableIndex::decode(&encoded).unwrap();
+    assert_eq!(decoded.0.len(), 3);
+    assert_eq!(decoded.get(&"a".to_owned()).unwrap(), &0);
+    assert_eq!(decoded.get(&"b".to_owned()).unwrap(), &3);
+    assert_eq!(decoded.get(&"c".to_owned()).unwrap(), &1000);
+}
+
+#[test]
 fn test_sst_data_try_from_u8_slice() {
     let data = SSTableData::try_from(vec![
         1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1

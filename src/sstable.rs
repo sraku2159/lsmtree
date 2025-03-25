@@ -6,13 +6,13 @@ type Key = String;
 type Value = Option<String>;
 type Offset = u64;
 
-use std::{collections::BTreeMap, fmt, ops::Index, path::Display, vec};
+use std::{collections::BTreeMap, fmt, ops::Index, vec};
 pub use reader::SSTableReader;
 pub use writer::SSTableWriter;
 
 use crate::{memtable::MemTable, utils::get_page_size};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SSTableHeader {
     pub header_size: u64,
     pub index_size: u64,
@@ -51,7 +51,7 @@ impl SSTableHeader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SSTableIndex(BTreeMap<Key, Offset>);
 
 impl SSTableIndex {
@@ -67,6 +67,24 @@ impl SSTableIndex {
             buf.extend_from_slice(&offset.to_ne_bytes());
         }
         buf
+    }
+
+    pub fn decode(data: &[u8]) -> Result<SSTableIndex, String> {
+        let mut i = 0;
+        let mut index = SSTableIndex::new();
+        while i < data.len() {
+            let key_len = u64::from_ne_bytes(data[i..(i + 8)]
+                .try_into()
+                .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+            let key = String::from_utf8(data[(i + 8)..(i + 8 + key_len as usize)].to_vec())
+                .map_err(|e| e.to_string())?;
+            let offset = u64::from_ne_bytes(data[(i + 8 + key_len as usize)..(i + 16 + key_len as usize)]
+                .try_into()
+                .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+            index.insert(key, offset);
+            i += 16 + key_len as usize;
+        }
+        Ok(index)
     }
 
     pub fn size(&self) -> u64 {
@@ -189,6 +207,7 @@ impl TryFrom<&SSTableData> for SSTableIndex {
 // SSTableDataはSSTableのデータのキャッシュ的な立ち位置として振る舞う
 /// SSTable自体はイミュータブルなので、これに対する更新は起きない
 /// TODO: キャッシュとしての振る舞いを実装する
+#[derive(Clone)]
 struct SSTableData{
     chunks: Vec<SSTableRecords>,
 }
@@ -352,6 +371,7 @@ impl<'a> Iterator for SSTableDataIterator<'a> {
     }
 }
 
+#[derive(Clone)]
 struct SSTableRecords(Vec<SSTableRecord>);
 
 impl SSTableRecords {
@@ -484,7 +504,7 @@ impl<'a> Iterator for SSTableRecordsIterator<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SSTableRecord(Key, Value);
 
 impl SSTableRecord {
