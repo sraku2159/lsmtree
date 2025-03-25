@@ -42,15 +42,15 @@ impl SSTableReader {
     }
 
     fn read_impl(file: &str, header: &SSTableHeader, key: &str) -> Result<Value, String> {
-        unimplemented!();
-        let (header, offset) = SSTableReader::read_header(file)?;
-        // 1. ファイルのヘッダーからインデックスの位置 と サイズを取得
-        let (index, offset) = SSTableReader::read_index(file, offset, header.index_size as usize)?;
-        // 2. インデックスを2部探索でkeyを探す
-        
-        // 3. keyが見つかったら、データの位置とサイズを取得
-        // 4. データを読み込む
-        // 5. データをデコードして返す
+        let (header, offset) = Self::read_header(file)?;
+        let index = Self::read_index(file, offset, header.index_size as usize)?;
+        let (begin, end) = index.find_key_range(&key.to_owned());
+        let end = end.unwrap_or(
+            File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
+        );
+        let data = Self::read_data(file, begin, end)?;
+        let value = data.get(&key.to_owned(), None).cloned().flatten();
+        Ok(value)
     }
 
     pub fn read_header(file: &str) -> Result<(SSTableHeader, Offset), String> {
@@ -61,17 +61,23 @@ impl SSTableReader {
         Ok((header, 16))
     }
 
-    pub fn read_index(file: &str, offset: Offset, size: usize) -> Result<(SSTableIndex, Offset), String> {
+    pub fn read_index(file: &str, offset: Offset, size: usize) -> Result<SSTableIndex, String> {
         let mut buf = vec![0u8; size];
         let mut f = File::open(file).map_err(|e| e.to_string())?;
         f.seek(std::io::SeekFrom::Start(offset as u64)).map_err(|e| e.to_string())?;
         let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
         let index = SSTableIndex::decode(&buf).map_err(|e| e.to_string())?;
-        Ok((index, offset + size))
+        Ok(index)
     }
 
-    pub fn read_data(file: &Path, offset: Offset) -> Result<SSTableData, String> {
-        unimplemented!();
+    // [begin, end)
+    pub fn read_data(file: &str, begin: u64, end: u64) -> Result<SSTableData, String> {
+        let mut f = File::open(file).map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; (end - begin) as usize];
+        f.seek(std::io::SeekFrom::Start(begin)).map_err(|e| e.to_string())?;
+        let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        let data = SSTableData::decode(&buf).map_err(|e| e.to_string())?;
+        Ok(data)
     }
 }
 
@@ -79,7 +85,7 @@ impl SSTableReader {
 mod tests{
     use std::fs;
 
-    use crate::sstable::reader::SSTableReader;
+    use crate::sstable::{reader::SSTableReader, SSTableHeader};
 
     #[test]
     fn test_sst_reader_new() {
@@ -144,8 +150,8 @@ mod tests{
                 let v_len = v.len() as u64;
                 vec![
                     k_len.to_ne_bytes().to_vec(),
-                    v_len.to_ne_bytes().to_vec(),
                     k.to_vec(),
+                    v_len.to_ne_bytes().to_vec(),
                     v.to_vec(),
                 ].concat()
             }).flatten().collect::<Vec<u8>>(),
@@ -153,7 +159,9 @@ mod tests{
         let index = vec![
             "key1".len().to_ne_bytes().to_vec(),
             "key1".as_bytes().to_vec(),
-            0u64.to_ne_bytes().to_vec()
+            (
+                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
+            ).to_ne_bytes().to_vec(),
         ].concat();
 
         fs::write(
@@ -175,11 +183,172 @@ mod tests{
     }
 
     #[test]
-    fn test_sst_reader_read_deleted() {}
+    fn test_sst_reader_read_deleted() {
+        let path = "/tmp/test_sst_reader_read_deleted.sst";
+        let kvs = vec![
+            ("key1", Some("value1".to_string())),
+            ("key2", None), // 削除されたキー
+            ("key3", Some("value3".to_string())),
+        ];
+        
+        // データ部分の作成
+        let data = kvs.iter().map(|(k, v)| {
+            let k = k.as_bytes();
+            let v = v.as_ref().map_or("".as_bytes(), |v| v.as_bytes());
+            let k_len = k.len() as u64;
+            let v_len = v.len() as u64;
+            vec![
+                k_len.to_ne_bytes().to_vec(),
+                k.to_vec(),
+                v_len.to_ne_bytes().to_vec(),
+                v.to_vec(),
+            ].concat()
+        }).collect::<Vec<Vec<u8>>>().concat();
+        
+        // インデックス部分の作成
+        let index = vec![
+            "key1".len().to_ne_bytes().to_vec(),
+            "key1".as_bytes().to_vec(),
+            (
+                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
+            ).to_ne_bytes().to_vec(),
+        ].concat();
+
+        // ファイルの作成
+        fs::write(
+            path, 
+            vec![
+                8u64.to_ne_bytes().to_vec(),
+                index.len().to_ne_bytes().to_vec(),
+                index,
+                data,
+            ].concat()
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path).unwrap();
+        
+        // 削除されたキーの読み取りテスト
+        let value = sst_reader.read("key2").unwrap();
+        assert_eq!(value, None); // 削除されたキーはNoneが返される
+        
+        // 通常のキーの読み取りテスト
+        let value = sst_reader.read("key1").unwrap();
+        assert_eq!(value, Some("value1".to_string()));
+        
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
-    fn test_sst_reader_read_not_exists() {}
+    fn test_sst_reader_read_not_exists() {
+        let path = "/tmp/test_sst_reader_read_not_exists.sst";
+        let kvs = vec![
+            ("key1", "value1"),
+            ("key3", "value3"),
+        ];
+        
+        // データ部分の作成
+        let data = kvs.iter().map(|(k, v)| {
+            let k = k.as_bytes();
+            let v = v.as_bytes();
+            let k_len = k.len() as u64;
+            let v_len = v.len() as u64;
+            vec![
+                k_len.to_ne_bytes().to_vec(),
+                k.to_vec(),
+                v_len.to_ne_bytes().to_vec(),
+                v.to_vec(),
+            ].concat()
+        }).collect::<Vec<Vec<u8>>>().concat();
+        
+        // インデックス部分の作成
+        let index = vec![
+            "key1".len().to_ne_bytes().to_vec(),
+            "key1".as_bytes().to_vec(),
+            (
+                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
+            ).to_ne_bytes().to_vec(),
+        ].concat();
+
+        // ファイルの作成
+        fs::write(
+            path, 
+            vec![
+                8u64.to_ne_bytes().to_vec(),
+                index.len().to_ne_bytes().to_vec(),
+                index,
+                data,
+            ].concat()
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path).unwrap();
+        
+        // 存在しないキーの読み取りテスト
+        let value = sst_reader.read("key2").unwrap();
+        assert_eq!(value, None); // 存在しないキーはNoneが返される
+        
+        // 存在するキーの読み取りテスト
+        let value = sst_reader.read("key1").unwrap();
+        assert_eq!(value, Some("value1".to_string()));
+        
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
-    fn test_sst_reader_read_read_big_data() {}
+    fn test_sst_reader_read_big_data() {
+        let path = "/tmp/test_sst_reader_read_big_data.sst";
+        
+        // 大きなデータの作成（10KBの文字列）
+        let big_value = "a".repeat(10 * 1024);
+        let kvs = vec![
+            ("key1", "value1"),
+            ("key2", &big_value),
+            ("key3", "value3"),
+        ];
+        
+        // データ部分の作成
+        let data = kvs.iter().map(|(k, v)| {
+            let k = k.as_bytes();
+            let v = v.as_bytes();
+            let k_len = k.len() as u64;
+            let v_len = v.len() as u64;
+            vec![
+                k_len.to_ne_bytes().to_vec(),
+                k.to_vec(),
+                v_len.to_ne_bytes().to_vec(),
+                v.to_vec(),
+            ].concat()
+        }).collect::<Vec<Vec<u8>>>().concat();
+        
+        // インデックス部分の作成
+        let index = vec![
+            "key1".len().to_ne_bytes().to_vec(),
+            "key1".as_bytes().to_vec(),
+            (
+                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
+            ).to_ne_bytes().to_vec(),
+        ].concat();
+
+        // ファイルの作成
+        fs::write(
+            path, 
+            vec![
+                8u64.to_ne_bytes().to_vec(),
+                index.len().to_ne_bytes().to_vec(),
+                index,
+                data,
+            ].concat()
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path).unwrap();
+        
+        // 大きなデータの読み取りテスト
+        let value = sst_reader.read("key2").unwrap();
+        assert_eq!(value, Some(big_value));
+        
+        // 通常のキーの読み取りテスト
+        let value = sst_reader.read("key1").unwrap();
+        assert_eq!(value, Some("value1".to_string()));
+        
+        fs::remove_file(path).unwrap();
+    }
 }

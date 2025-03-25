@@ -3,11 +3,11 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, thread::spawn};
+use std::{fmt::Debug, fs::File, thread::spawn};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
-use sstable::{compaction::Compaction,  SSTableWriter};
+use sstable::{compaction::Compaction, SSTableReader, SSTableWriter};
 
 use utils::*;
 
@@ -20,7 +20,7 @@ pub type Value = String;
 #[derive(Debug)]
 pub struct LSMTreeConf<T>
 where
-    T: Compaction + Debug + Send,
+    T: Compaction,
 {
     compaction: T,
     sst_dir: String,
@@ -28,7 +28,7 @@ where
     memtable_threshold: usize,
 }
 
-impl<T: Compaction + Debug + Send> LSMTreeConf<T> {
+impl<T: Compaction> LSMTreeConf<T> {
     pub fn new(
         compaction: T,
         sst_dir: Option<String>,
@@ -51,7 +51,7 @@ impl<T: Compaction + Debug + Send> LSMTreeConf<T> {
 #[derive(Debug)]
 pub struct LSMTree<T>
 where
-    T: Compaction + Debug + Send
+    T: Compaction
 {
     memtable: MemTable,
     memtable_threshold: usize,
@@ -60,7 +60,7 @@ where
     compaction: T,
 }
 
-impl<T: Compaction + Debug + Send> LSMTree<T> {
+impl<T: Compaction> LSMTree<T> {
     pub fn new(conf: LSMTreeConf<T>) -> Result<LSMTree<T>, String> {
         Self::create_dir(&conf.sst_dir)?;
         Self::create_dir(&conf.commitlog_dir)?;
@@ -126,13 +126,18 @@ impl<T: Compaction + Debug + Send> LSMTree<T> {
         Ok(())
     }
 
-    pub fn get(&self, key: &str) -> Option<Value> {
+    pub fn get(&self, key: &str) -> Result<Option<Value>, String> {
         match self.memtable.get(key) {
-            Some(value) => Some(value.to_string().clone()),
+            Some(value) => Ok(Some(value.to_string().clone())),
             None => {
-                unimplemented!();
-                // let sstable = SSTableWriter::new(&self.sst_dir).unwrap();
-                // sstable.read(key)
+                for reader in self.reader_iter() {
+                    match reader.read(key) {
+                        Ok(None) => continue,
+                        Ok(value) => return Ok(value),
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(None)
             }
         }
     }
@@ -151,5 +156,43 @@ impl<T: Compaction + Debug + Send> LSMTree<T> {
 
     pub fn get_memtable_threshold(&self) -> usize {
         self.memtable_threshold
+    }
+
+    fn reader_iter(&self) -> SSTableReaderIter<T> {
+        SSTableReaderIter::new(self.sst_dir.clone(), &self.compaction)
+    }
+}
+
+struct SSTableReaderIter<'a, T : Compaction> {
+    sstables: Vec<SSTableReader>,
+    index: usize,
+    _phantom: std::marker::PhantomData<&'a T>,
+}
+
+// バケットはディレクトリで数字
+// バケットの中のテーブルは作成日時でソート
+
+impl<'a, T: Compaction> SSTableReaderIter<'a, T> {
+    fn new(root_dir: String, strategy: &'a T) -> SSTableReaderIter<T> {
+        let sstables = strategy.get_sstables(&root_dir);
+        SSTableReaderIter {
+            sstables,
+            index: 0,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, T: Compaction> Iterator for SSTableReaderIter<'a, T> {
+    type Item = SSTableReader;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.sstables.len() {
+            let ret = Some(self.sstables[self.index].clone());
+            self.index += 1;
+            ret
+        } else {
+            None
+        }
     }
 }

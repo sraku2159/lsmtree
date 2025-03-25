@@ -87,6 +87,18 @@ impl SSTableIndex {
         Ok(index)
     }
 
+    pub fn find_key_range(&self, key: &Key) -> (u64, Option<u64>) {
+        for i in 0..self.0.len() {
+            let (k, offset) = self.0.iter().nth(i).unwrap();
+            let next = self.0.iter().nth(i + 1);
+            if k <= key && next.map_or(true, |(k, _)| key < k) {
+                return (*offset, next.map(|(_, v)| *v));
+            }
+        }
+        unreachable!();
+        // (u64::MAX, None)
+    }
+
     pub fn size(&self) -> u64 {
         self.0.iter().fold(0, |acc, (key, _)| {
             acc 

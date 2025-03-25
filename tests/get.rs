@@ -21,7 +21,7 @@ fn test_get_with_size_tiered() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
     }
     for (key, value) in data.iter() {
-        assert_eq!(lsm_tree.get(*key), Some(value.to_string()));
+        assert_eq!(lsm_tree.get(*key), Ok(Some(value.to_string())));
     }
     tear_down(sst_dir, commitlog_dir);
 }
@@ -42,7 +42,7 @@ fn test_get_with_size_leveled() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
     }
     for (key, value) in data.iter() {
-        assert_eq!(lsm_tree.get(*key), Some(value.to_string()));
+        assert_eq!(lsm_tree.get(*key), Ok(Some(value.to_string())));
     }
     tear_down(sst_dir, commitlog_dir);
 }
@@ -69,7 +69,7 @@ fn test_get_big_quantity() {
         assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i)).unwrap(), None);
     }
     for i in 0..104857 {
-        assert_eq!(lsm_tree.get(&format!("key{}", i)), Some(format!("value{}", i)));
+        assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i))));
     }
     tear_down(sst_dir, commitlog_dir);
 }
