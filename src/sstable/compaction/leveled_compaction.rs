@@ -16,4 +16,8 @@ impl Compaction for LeveledCompaction {
     fn compact(sstabel: &SSTableReader) {
         unimplemented!();
     }
+
+    fn get_sstables(&self, dir: &String) -> Vec<SSTableReader> {
+        unimplemented!();
+    }
 }

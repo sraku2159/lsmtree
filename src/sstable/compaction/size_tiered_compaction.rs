@@ -10,10 +10,15 @@ impl SizeTieredCompaction {
         SizeTieredCompaction {
         }
     }
+
 }
 
 impl Compaction for SizeTieredCompaction {
     fn compact(sstable: &SSTableReader) {
+        unimplemented!();
+    }
+
+    fn get_sstables(&self, dir: &String) -> Vec<SSTableReader> {
         unimplemented!();
     }
 }

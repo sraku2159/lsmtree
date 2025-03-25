@@ -5,4 +5,5 @@ use super::SSTableReader;
 
 pub trait Compaction {
     fn compact(sstable: &SSTableReader);
+    fn get_sstables(&self, dir: &String) -> Vec<SSTableReader>;
 }

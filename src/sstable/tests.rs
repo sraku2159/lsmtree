@@ -257,6 +257,27 @@ fn test_sst_index_decode() {
 }
 
 #[test]
+fn test__sst_index_find_key_range() {
+    let mut vec = vec![
+        ("c", 1000u64),
+        ("a", 0u64),
+        ("e", 2000u64),
+    ];
+    let mut sst_index = SSTableIndex::new();
+
+    vec.iter().for_each(|(key, offset)| {
+        sst_index.insert((*key).to_owned(), *offset);
+    });
+
+    assert_eq!(sst_index.find_key_range(&"a".to_owned()), (0, Some(1000)));
+    assert_eq!(sst_index.find_key_range(&"b".to_owned()), (0, Some(1000)));
+    assert_eq!(sst_index.find_key_range(&"c".to_owned()), (1000, Some(2000)));
+    assert_eq!(sst_index.find_key_range(&"d".to_owned()), (1000, Some(2000)));
+    assert_eq!(sst_index.find_key_range(&"e".to_owned()), (2000, None));
+    assert_eq!(sst_index.find_key_range(&"f".to_owned()), (2000, None));
+}
+
+#[test]
 fn test_sst_data_try_from_u8_slice() {
     let data = SSTableData::try_from(vec![
         1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
