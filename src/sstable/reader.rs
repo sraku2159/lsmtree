@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::{Read, Seek}, path::Path};
+use std::{fs::File, io::{Read, Seek}};
 
 use super::{SSTableData, SSTableHeader, SSTableIndex, Value};
 
@@ -42,6 +42,7 @@ impl SSTableReader {
     }
 
     fn read_impl(file: &str, header: &SSTableHeader, key: &str) -> Result<Value, String> {
+        let _ = header;
         let (header, offset) = Self::read_header(file)?;
         let index = Self::read_index(file, offset, header.index_size as usize)?;
         let (begin, end) = index.find_key_range(&key.to_owned());

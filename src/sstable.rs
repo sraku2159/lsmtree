@@ -13,7 +13,7 @@ pub use writer::SSTableWriter;
 use crate::{memtable::MemTable, utils::get_page_size};
 
 #[derive(Debug, Clone)]
-struct SSTableHeader {
+pub struct SSTableHeader {
     pub header_size: u64,
     pub index_size: u64,
 }
@@ -52,7 +52,7 @@ impl SSTableHeader {
 }
 
 #[derive(Debug, Clone)]
-struct SSTableIndex(BTreeMap<Key, Offset>);
+pub struct SSTableIndex(BTreeMap<Key, Offset>);
 
 impl SSTableIndex {
     fn new() -> SSTableIndex {
@@ -220,7 +220,7 @@ impl TryFrom<&SSTableData> for SSTableIndex {
 /// SSTable自体はイミュータブルなので、これに対する更新は起きない
 /// TODO: キャッシュとしての振る舞いを実装する
 #[derive(Clone)]
-struct SSTableData{
+pub struct SSTableData{
     chunks: Vec<SSTableRecords>,
 }
 
@@ -384,7 +384,7 @@ impl<'a> Iterator for SSTableDataIterator<'a> {
 }
 
 #[derive(Clone)]
-struct SSTableRecords(Vec<SSTableRecord>);
+pub struct SSTableRecords(Vec<SSTableRecord>);
 
 impl SSTableRecords {
     fn new() -> SSTableRecords {

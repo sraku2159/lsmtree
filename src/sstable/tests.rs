@@ -1,6 +1,4 @@
-use std::{fs::{self, metadata}, vec};
-
-use libc::exit;
+use std::vec;
 
 use crate::memtable;
 

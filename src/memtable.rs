@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Display, ops::Index};
+use std::{collections::BTreeMap, fmt::Display};
 
 type Key = String;
 #[derive(Debug, Clone, PartialEq)]
