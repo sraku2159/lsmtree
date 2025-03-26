@@ -37,6 +37,10 @@ impl SSTableReader {
         )
     }
 
+    pub fn is_file_exists(&self) -> bool {
+        std::path::Path::new(&self.file).exists()
+    }
+
     pub fn read(&self, key: &str) -> Result<Value, String> {
         Self::read_impl(&self.file,  &self.header, key)
     }

@@ -166,7 +166,7 @@ impl<T: Compaction> LSMTree<T> {
 struct SSTableReaderIter<'a, T : Compaction> {
     sstables: Vec<SSTableReader>,
     index: usize,
-    _phantom: std::marker::PhantomData<&'a T>,
+    strategy: &'a T,
 }
 
 // バケットはディレクトリで数字
@@ -178,7 +178,7 @@ impl<'a, T: Compaction> SSTableReaderIter<'a, T> {
         SSTableReaderIter {
             sstables,
             index: 0,
-            _phantom: std::marker::PhantomData,
+            strategy,
         }
     }
 }
@@ -187,12 +187,15 @@ impl<'a, T: Compaction> Iterator for SSTableReaderIter<'a, T> {
     type Item = SSTableReader;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.sstables.len() {
-            let ret = Some(self.sstables[self.index].clone());
-            self.index += 1;
-            ret
-        } else {
-            None
+        if self.index >= self.sstables.len() {
+            return None;
         }
+        let mut reader = self.sstables[self.index].clone();
+        if !reader.is_file_exists() {
+            self.sstables = self.strategy.get_sstables(&self.strategy.get_target_dir());
+            reader = self.sstables[self.index].clone();
+        }
+        self.index += 1;
+        Some(reader)
     }
 }
