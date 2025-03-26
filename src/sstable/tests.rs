@@ -258,7 +258,7 @@ fn test_sst_index_decode() {
 fn test_sst_index_find_key_range() {
     let vec = vec![
         ("c", 1000u64),
-        ("a", 0u64),
+        ("b", 0u64),
         ("e", 2000u64),
     ];
     let mut sst_index = SSTableIndex::new();
@@ -267,12 +267,12 @@ fn test_sst_index_find_key_range() {
         sst_index.insert((*key).to_owned(), *offset);
     });
 
-    assert_eq!(sst_index.find_key_range(&"a".to_owned()), (0, Some(1000)));
-    assert_eq!(sst_index.find_key_range(&"b".to_owned()), (0, Some(1000)));
-    assert_eq!(sst_index.find_key_range(&"c".to_owned()), (1000, Some(2000)));
-    assert_eq!(sst_index.find_key_range(&"d".to_owned()), (1000, Some(2000)));
-    assert_eq!(sst_index.find_key_range(&"e".to_owned()), (2000, None));
-    assert_eq!(sst_index.find_key_range(&"f".to_owned()), (2000, None));
+    assert_eq!(sst_index.find_key_range(&"a".to_owned()), None);
+    assert_eq!(sst_index.find_key_range(&"b".to_owned()), Some((0, Some(1000))));
+    assert_eq!(sst_index.find_key_range(&"c".to_owned()), Some((1000, Some(2000))));
+    assert_eq!(sst_index.find_key_range(&"d".to_owned()), Some((1000, Some(2000))));
+    assert_eq!(sst_index.find_key_range(&"e".to_owned()), Some((2000, None)));
+    assert_eq!(sst_index.find_key_range(&"f".to_owned()), Some((2000, None)));
 }
 
 #[test]

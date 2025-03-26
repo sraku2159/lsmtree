@@ -56,6 +56,7 @@ impl MemTable {
         iter.fold(0, |acc, val| acc + val.0.len() + val.1.to_string().len())
     }
 
+    // Memtableの責務かどうかは微妙
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for (key, value) in self.data.iter() {

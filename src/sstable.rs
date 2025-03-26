@@ -87,16 +87,18 @@ impl SSTableIndex {
         Ok(index)
     }
 
-    pub fn find_key_range(&self, key: &Key) -> (u64, Option<u64>) {
+    pub fn find_key_range(&self, key: &Key) -> Option<(u64, Option<u64>)> {
         for i in 0..self.0.len() {
             let (k, offset) = self.0.iter().nth(i).unwrap();
             let next = self.0.iter().nth(i + 1);
+            if key < k {
+                break;
+            }
             if k <= key && next.map_or(true, |(k, _)| key < k) {
-                return (*offset, next.map(|(_, v)| *v));
+                return Some((*offset, next.map(|(_, v)| *v)));
             }
         }
-        unreachable!();
-        // (u64::MAX, None)
+        None
     }
 
     pub fn size(&self) -> u64 {
@@ -391,7 +393,6 @@ impl SSTableRecords {
         SSTableRecords(vec![])
     }
 
-    // RawDataを作成したら、traitで作成
     fn encode(&self) -> Vec<u8> {
         self.0.iter().fold(vec![], |mut acc, record| {
             acc.extend_from_slice(&record.encode());

@@ -13,7 +13,11 @@ impl LeveledCompaction {
 }
 
 impl Compaction for LeveledCompaction {
-    fn compact(sstabel: &SSTableReader) {
+    fn compact(&self, sstable: Vec<SSTableReader>) {
+        unimplemented!();
+    }
+
+    fn get_target_dir(&self) -> String {
         unimplemented!();
     }
 

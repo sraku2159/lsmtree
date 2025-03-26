@@ -45,13 +45,15 @@ impl SSTableReader {
         let _ = header;
         let (header, offset) = Self::read_header(file)?;
         let index = Self::read_index(file, offset, header.index_size as usize)?;
-        let (begin, end) = index.find_key_range(&key.to_owned());
-        let end = end.unwrap_or(
-            File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
-        );
-        let data = Self::read_data(file, begin, end)?;
-        let value = data.get(&key.to_owned(), None).cloned().flatten();
-        Ok(value)
+        if let Some((begin, end)) = index.find_key_range(&key.to_owned()) {
+            let end = end.unwrap_or(
+                File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
+            );
+            let data = Self::read_data(file, begin, end)?;
+            let value = data.get(&key.to_owned(), None).cloned().flatten();
+            return Ok(value)
+        }
+        Ok(None)
     }
 
     pub fn read_header(file: &str) -> Result<(SSTableHeader, Offset), String> {
@@ -168,7 +170,7 @@ mod tests{
         fs::write(
             path, 
             vec![
-                8u64.to_ne_bytes().to_vec(),
+                16u64.to_ne_bytes().to_vec(),
                 index.len().to_ne_bytes().to_vec(),
                 index,
                 data,
@@ -219,7 +221,7 @@ mod tests{
         fs::write(
             path, 
             vec![
-                8u64.to_ne_bytes().to_vec(),
+                16u64.to_ne_bytes().to_vec(),
                 index.len().to_ne_bytes().to_vec(),
                 index,
                 data,
@@ -274,7 +276,7 @@ mod tests{
         fs::write(
             path, 
             vec![
-                8u64.to_ne_bytes().to_vec(),
+                16u64.to_ne_bytes().to_vec(),
                 index.len().to_ne_bytes().to_vec(),
                 index,
                 data,
@@ -333,7 +335,7 @@ mod tests{
         fs::write(
             path, 
             vec![
-                8u64.to_ne_bytes().to_vec(),
+                16u64.to_ne_bytes().to_vec(),
                 index.len().to_ne_bytes().to_vec(),
                 index,
                 data,
@@ -345,7 +347,7 @@ mod tests{
         // 大きなデータの読み取りテスト
         let value = sst_reader.read("key2").unwrap();
         assert_eq!(value, Some(big_value));
-        
+
         // 通常のキーの読み取りテスト
         let value = sst_reader.read("key1").unwrap();
         assert_eq!(value, Some("value1".to_string()));

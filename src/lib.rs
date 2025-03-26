@@ -173,7 +173,7 @@ struct SSTableReaderIter<'a, T : Compaction> {
 // バケットの中のテーブルは作成日時でソート
 
 impl<'a, T: Compaction> SSTableReaderIter<'a, T> {
-    fn new(root_dir: String, strategy: &'a T) -> SSTableReaderIter<T> {
+    fn new(root_dir: String, strategy: &'a T) -> SSTableReaderIter<'a, T> {
         let sstables = strategy.get_sstables(&root_dir);
         SSTableReaderIter {
             sstables,

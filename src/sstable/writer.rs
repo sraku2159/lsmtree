@@ -24,10 +24,20 @@ impl SSTableWriter {
     fn write_impl(memtable: &MemTable, file: &str) -> Result<(), String> {
         let mut file = File::create(file).map_err(|e| e.to_string())?;
         let index = SSTableIndex::from(memtable);
-        let data = SSTableData::try_from(memtable.encode())?;
-        Self::write_header_impl(&mut file, &index, &data)?;
+        // let data = SSTableData::try_from(memtable.encode())?;
+        Self::write_header_impl(&mut file, &index)?;
         Self::write_index_impl(&mut file, &index)?;
-        Self::write_data_impl(&mut file, &data)
+        Self::write_data_impl(&mut file, &memtable)
+    }
+
+    fn write_header_impl(file: &mut File, index: &SSTableIndex) -> Result<(), String> {
+        let index_size = index.size() as u64;
+        let header = SSTableHeader::new(
+            SSTableHeader::SIZE as u64,
+            index_size
+        );
+        let header = header.encode();
+        file.write_all(&header).map_err(|e| e.to_string())
     }
 
     // コンパクションを考えると、データから作成する方が良い
@@ -36,19 +46,8 @@ impl SSTableWriter {
         file.write_all(&mut index).map_err(|e| e.to_string())
     }
 
-    fn write_header_impl(file: &mut File, index: &SSTableIndex, data: &SSTableData) -> Result<(), String> {
-        let data_size = data.len() as u64;
-        let index_size = index.size() as u64;
-        let header = SSTableHeader::new(
-            data_size,
-            index_size
-        );
-        let header = header.encode();
-        file.write_all(&header).map_err(|e| e.to_string())
-    }
-
     // ページサイズごとに書き込むという方法との比較を時間計算量の観点で今後したい
-    fn write_data_impl(file: &mut File, data: &SSTableData) -> Result<(), String> {
+    fn write_data_impl(file: &mut File, data: &MemTable) -> Result<(), String> {
         let mut data =  data.encode().clone();
         file.write_all(&mut data).map_err(|e| e.to_string())
     }
@@ -69,7 +68,7 @@ mod tests {
 
         let content = fs::read(path).unwrap();
         let header = vec![
-            26, 0, 0, 0, 0, 0, 0, 0,
+            16, 0, 0, 0, 0, 0, 0, 0,
             20, 0, 0, 0, 0, 0, 0, 0,
         ];
         let index = vec![
@@ -109,7 +108,7 @@ mod tests {
         let path = "/tmp/test_sst_writer_write_header_impl.sst";
         let mut file = File::create(&path).unwrap();
 
-        assert!(SSTableWriter::write_header_impl(&mut file, &index, &data).is_ok());
+        assert!(SSTableWriter::write_header_impl(&mut file, &index).is_ok());
 
         let index_size = index.size() as u64;
         let data_size = data.len() as u64;
@@ -117,7 +116,7 @@ mod tests {
         assert_eq!(
             content,
             vec![
-                data_size.to_ne_bytes().to_vec(),
+                (SSTableHeader::SIZE as u64).to_ne_bytes().to_vec(),
                 index_size.to_ne_bytes().to_vec(),
             ].concat()
         );
@@ -206,8 +205,7 @@ mod tests {
         memtable.put("key1", "value1");
         let path = "/tmp/test_sst_writer_wirte_data_impl.sst";
         let mut file = File::create(path).unwrap();
-        let mut data = SSTableData::try_from(memtable.encode()).unwrap();
-        assert!(SSTableWriter::write_data_impl(&mut file, &mut data).is_ok());
+        assert!(SSTableWriter::write_data_impl(&mut file, &memtable).is_ok());
     
         let content = fs::read_to_string(path).unwrap();
         assert_eq!(
