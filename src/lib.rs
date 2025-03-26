@@ -159,23 +159,25 @@ impl<T: Compaction> LSMTree<T> {
     }
 
     fn reader_iter(&self) -> SSTableReaderIter<T> {
-        SSTableReaderIter::new(self.sst_dir.clone(), &self.compaction)
+        SSTableReaderIter::new(&self.sst_dir, &self.compaction)
     }
 }
 
-struct SSTableReaderIter<'a, T : Compaction> {
+struct SSTableReaderIter<'a, 'b, T : Compaction> {
+    root_dir: &'a String,
     sstables: Vec<SSTableReader>,
     index: usize,
-    strategy: &'a T,
+    strategy: &'b T,
 }
 
 // バケットはディレクトリで数字
 // バケットの中のテーブルは作成日時でソート
 
-impl<'a, T: Compaction> SSTableReaderIter<'a, T> {
-    fn new(root_dir: String, strategy: &'a T) -> SSTableReaderIter<'a, T> {
-        let sstables = strategy.get_sstables(&root_dir);
+impl<'a, 'b, T: Compaction> SSTableReaderIter<'a, 'b, T> {
+    fn new(root_dir: &'a String, strategy: &'b T) -> SSTableReaderIter<'a, 'b, T> {
+        let sstables = strategy.get_sstables(root_dir);
         SSTableReaderIter {
+            root_dir,
             sstables,
             index: 0,
             strategy,
@@ -183,7 +185,7 @@ impl<'a, T: Compaction> SSTableReaderIter<'a, T> {
     }
 }
 
-impl<'a, T: Compaction> Iterator for SSTableReaderIter<'a, T> {
+impl<'a, 'b, T: Compaction> Iterator for SSTableReaderIter<'a, 'b, T> {
     type Item = SSTableReader;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -192,7 +194,7 @@ impl<'a, T: Compaction> Iterator for SSTableReaderIter<'a, T> {
         }
         let mut reader = self.sstables[self.index].clone();
         if !reader.is_file_exists() {
-            self.sstables = self.strategy.get_sstables(&self.strategy.get_target_dir());
+            self.sstables = self.strategy.get_sstables(self.root_dir);
             reader = self.sstables[self.index].clone();
         }
         self.index += 1;
