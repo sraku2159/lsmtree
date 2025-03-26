@@ -94,6 +94,7 @@ fn test_get_big_quantity() {
         * 1entry ≒ 10B
         * 1048576B / 10B ≒ 104857
      */
+    // 3391.58s
     for i in 0..104857 {
         assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i)).unwrap(), None);
     }
