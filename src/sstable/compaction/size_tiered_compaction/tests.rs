@@ -1,7 +1,5 @@
 use std::fs;
 
-use libc::if_data;
-
 use crate::{memtable::MemTable, sstable::{SSTableData, SSTableReader}, utils::get_page_size};
 
 use super::SizeTieredCompaction;
@@ -39,6 +37,7 @@ fn test_merge_impl_simple() {
         get_page_size(),
         None,
         None,
+        None,
     );
     let merged = size_tiered_compaction.merge_impl(&left, &right);
     assert_eq!(merged, expected);
@@ -66,6 +65,7 @@ fn test_merge_impl_duplicated() {
     let expected = create_sstable_data(expected);
     let size_tiered_compaction = super::SizeTieredCompaction::new(
         get_page_size(),
+        None,
         None,
         None,
     );
@@ -96,6 +96,7 @@ fn test_merge_impl_interleaved() {
     let expected = create_sstable_data(expected);
     let size_tiered_compaction = super::SizeTieredCompaction::new(
         get_page_size(),
+        None,
         None,
         None,
     );
@@ -132,12 +133,13 @@ fn test_merge() {
         ("key1", "value4", 4),
         ("key2", "value10", 10),
         ("key3", "value9", 9),
-        ("key4", "value4", 7),
+        ("key4", "value7", 7),
     ];
     let expected = create_sstable_data(expected);
 
     let size_tiered_compaction = super::SizeTieredCompaction::new(
         get_page_size(),
+        None,
         None,
         None,
     );
@@ -151,6 +153,7 @@ fn test_get_interesting_bucket_with_med() {
         get_page_size(),
         Some(0.5),
         Some(1.5),
+        None,
     );
 
     let file_1 = "get_interesting_bucket_med1";
@@ -210,6 +213,7 @@ fn test_get_interesting_bucket_with_min() {
         get_page_size(),
         Some(0.5),
         Some(1.5),
+        None,
     );
 
     let file_1 = "get_interestring_bucket_min1";
@@ -269,6 +273,7 @@ fn test_get_interesting_bucket_with_max() {
         get_page_size(),
         Some(0.5),
         Some(1.5),
+        None,
     );
 
     let file_1 = "get_interestring_bucket_max1";

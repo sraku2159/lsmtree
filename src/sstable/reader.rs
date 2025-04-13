@@ -1,6 +1,6 @@
 use std::{fs::{File, Metadata}, io::{Read, Seek}};
 
-use super::{SSTableData, SSTableHeader, SSTableIndex, Value};
+use super::{SSTableData, SSTableIndex, Value};
 
 type Offset = usize;
 
@@ -102,7 +102,7 @@ impl SSTableReader {
 mod tests{
     use std::fs;
 
-    use crate::sstable::{reader::SSTableReader, SSTableHeader};
+    use crate::sstable::reader::SSTableReader;
 
     #[test]
     fn test_sst_reader_new() {

@@ -3,7 +3,7 @@ use crate::sstable::SSTableWriter;
 use super::SSTableReader;
 use super::Compaction;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LeveledCompaction {
 }
 

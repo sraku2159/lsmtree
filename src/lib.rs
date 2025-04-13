@@ -3,7 +3,7 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, thread::spawn};
+use std::{fmt::Debug, thread::{spawn, sleep}, time::Duration};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
@@ -20,7 +20,7 @@ pub type Value = String;
 #[derive(Debug)]
 pub struct LSMTreeConf<T, U = DefaultTimeStampGenerator>
 where
-    T: Compaction,
+    T: Compaction + Clone + Send + Sync + 'static,
     U: TimeStampGenerator,
 {
     compaction: T,
@@ -30,9 +30,11 @@ where
     memtable_threshold: usize,
     index_interval: usize,
     index_file_suffix: String,
+    compaction_interval: u64,  // コンパクションの実行間隔（秒）
+    enable_compaction: bool,   // コンパクションを有効にするかどうか
 }
 
-impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
+impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTreeConf<T, U> {
     pub fn new(
         compaction: T,
         timestamp_generator: U,
@@ -41,6 +43,8 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
         memtable_threshold: Option<usize>, 
         index_interval: Option<usize>,
         index_file_suffix: Option<String>,
+        compaction_interval: Option<u64>,
+        enable_compaction: Option<bool>,
         ) -> LSMTreeConf<T, U>
     {
         let sst_dir = sst_dir.unwrap_or("./.sst".to_string());
@@ -48,6 +52,9 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
         let memtable_threshold = memtable_threshold.unwrap_or(get_page_size());
         let index_interval = index_interval.unwrap_or(get_page_size());
         let index_file_suffix = index_file_suffix.unwrap_or("idx".to_string());
+        let compaction_interval = compaction_interval.unwrap_or(300); // デフォルトは5分（300秒）
+        let enable_compaction = enable_compaction.unwrap_or(true);    // デフォルトは有効
+        
         LSMTreeConf {
             compaction,
             timestamp_generator,
@@ -56,6 +63,8 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
             memtable_threshold,
             index_interval,
             index_file_suffix,
+            compaction_interval,
+            enable_compaction,
         }
     }
 }
@@ -76,21 +85,122 @@ where
     timestamp_generator: U,
 }
 
-impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
+impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTree<T, U> {
     pub fn new(conf: LSMTreeConf<T, U>) -> Result<LSMTree<T, U>, String> {
         Self::create_dir(&conf.sst_dir)?;
         Self::create_dir(&conf.commitlog_dir)?;
 
-        Ok(LSMTree {
+        let lsm_tree = LSMTree {
             memtable: MemTable::new(),
             memtable_threshold: conf.memtable_threshold,
             index_interval: conf.index_interval,
-            index_file_suffix: conf.index_file_suffix,
+            index_file_suffix: conf.index_file_suffix.clone(),
             commitlog: CommitLog::new(&conf.commitlog_dir)?,
-            sst_dir: conf.sst_dir,
-            compaction: conf.compaction,
+            sst_dir: conf.sst_dir.clone(),
+            compaction: conf.compaction.clone(),
             timestamp_generator: conf.timestamp_generator,
-        })
+        };
+
+        // コンパクションが有効な場合、定期的にコンパクションを実行するスレッドを起動
+        if conf.enable_compaction {
+            Self::start_compaction_thread(
+                conf.sst_dir,
+                conf.index_file_suffix,
+                conf.compaction,
+                conf.compaction_interval,
+            );
+        }
+
+        Ok(lsm_tree)
+    }
+
+    // 定期的にコンパクションを実行するスレッドを起動
+    fn start_compaction_thread(
+        sst_dir: String,
+        index_file_suffix: String,
+        compaction: T,
+        interval_seconds: u64,
+    ) {
+        spawn(move || {
+            loop {
+                // 指定された間隔でスリープ
+                sleep(Duration::from_secs(interval_seconds));
+                
+                // コンパクションを実行
+                let sstables = Self::get_sstables_for_compaction(&sst_dir, &index_file_suffix);
+                if sstables.len() > 1 {
+                    match SSTableWriter::new(&sst_dir) {
+                        Ok(writer) => {
+                            match compaction.compact(sstables, writer) {
+                                Ok(_) => println!("Periodic compaction completed successfully"),
+                                Err(e) => eprintln!("ERROR: periodic compaction failed: {}", e),
+                            }
+                        },
+                        Err(e) => eprintln!("ERROR: Failed to create SSTableWriter for periodic compaction: {}", e),
+                    }
+                }
+            }
+        });
+    }
+
+    // コンパクションのためのSSTableのリストを取得（シンプルな実装）
+    fn get_sstables_for_compaction(dir: &str, idx_file_suffix: &str) -> Vec<SSTableReader> {
+        let mut sstables = Vec::new();
+        
+        // ディレクトリの読み取りに失敗した場合は空のベクターを返す
+        let dir_entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("ERROR: Failed to read directory {}: {}", dir, e);
+                return sstables;
+            }
+        };
+        
+        // 各エントリを処理
+        for entry_result in dir_entries {
+            // エントリの取得に失敗した場合は次のエントリへ
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            
+            let path = entry.path();
+            
+            // ファイルでない場合はスキップ
+            if !path.is_file() {
+                continue;
+            }
+            
+            // ファイル名を取得
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(name) => name,
+                None => continue,
+            };
+            
+            // .sstファイルでない場合はスキップ
+            if !file_name.ends_with(".sst") {
+                continue;
+            }
+            
+            // インデックスファイルのパスを作成
+            let idx_file_name = format!("{}.{}", file_name, idx_file_suffix);
+            let idx_path = path.with_file_name(idx_file_name);
+            
+            // インデックスファイルが存在しない場合はスキップ
+            if !idx_path.exists() {
+                continue;
+            }
+            
+            // SSTableReaderの作成
+            match SSTableReader::new(
+                path.to_str().unwrap(), 
+                idx_path.to_str().unwrap()) {
+                Ok(reader) => sstables.push(reader),
+                Err(_) => continue,
+            }
+        }
+        
+        sstables
     }
 
     fn create_dir(path: &str) -> Result<(), String> {
@@ -118,10 +228,10 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
         if self.memtable.len() >= self.memtable_threshold {    
             // 大きいデータ構造なのでディープコピーの場合、パフォーマンスが悪い
             // ただ、現在の実装だと借用状態なので、ムーブができない
-            let memtable = self.memtable.clone();              
             let dir = self.sst_dir.clone();
-            let commitlog = self.commitlog.try_clone()?;
             let index_interval = self.index_interval;
+            let memtable = self.memtable.clone();
+            let commitlog = self.commitlog.try_clone()?;
             self.memtable = MemTable::new();
             self.commitlog = CommitLog::new(self.commitlog.get_dir())?;
             spawn( move || {
@@ -139,6 +249,17 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
             });
         }
         Ok(ret.map(|v| v.to_string()))
+    }
+
+    // 手動でコンパクションを実行するためのメソッド（テスト用）
+    pub fn launch_compaction(&self) -> Result<(), String> {
+        let sstables: Vec<SSTableReader> = self.reader_iter().collect();
+        if sstables.len() <= 1 {
+            return Ok(());
+        }
+        
+        let writer = SSTableWriter::new(&self.sst_dir)?;
+        self.compaction.compact(sstables, writer)
     }
 
     fn flush_memtable(dir: &str, memtable: MemTable, index_interval: usize) -> Result<(), String> {

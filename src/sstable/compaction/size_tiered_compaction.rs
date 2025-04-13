@@ -6,57 +6,28 @@ use crate::sstable::SSTableWriter;
 use super::SSTableReader;
 use super::Compaction;
 
-/*
-memo
-
-Compactionは別プロセスで行われる予定
-
-readする際に使用するイテレータはCompactionの実装によって異なる
-ここで懸念点が一つある
-nextで次のReaderを返すが、実際に読み込む前にコンパクションによってファイルが削除される可能性がある
-これをどう解決するか
-
-1. Reader作成時にファイルをオープンしてしまう
-カーネルは参照カウントが0になるまでファイルを削除しないため、解決は可能。
-ただ、失敗がないように実装するには、シグナルハンドラを使ってコンパクション処理に割り込みを入れる必要がある
-
-2. Read開始時にファイルが存在するか確認する。ファイルが存在しない場合、イテレータを進める
-これは、対象のファイルが削除されたということは、そのファイルがコンパクションの対象であるということなので、
-次に読み込む対象がコンパクションされたファイルであれば問題ない
-(しかも、結構鮮やかでは？)
-
-
-しかし、いずれの戦略を取るにしても、イテレーションがこちらに依存するのはあまり鮮やかではない
-
-
-コンパクション
-* 時系列順でコンパクションを行わなければ、整合性が取れない
-* stagedディレクトリに存在するファイルが最も小さいファイルが格納されるバケットに移動されるまで、コンパクションは行わなければならない
-* stagedはメッセージキューの役割を果たす
-
-拡張性を考えると、マルチスレッドorマルチプロセスで常にこの処理側が/stagedを監視する方が良い
-*/
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SizeTieredCompaction {
     index_interval: usize,
     min_threshold: f64,
     max_threshold: f64,
+    bucket_threshold: usize,
 }
 
 impl SizeTieredCompaction {
-    pub fn new(index_interval: usize, min_threshold: Option<f64>, max_threshold: Option<f64>) -> SizeTieredCompaction {
+    pub fn new(index_interval: usize, min_threshold: Option<f64>, max_threshold: Option<f64>, bucket_threshold: Option<usize>) -> SizeTieredCompaction {
         SizeTieredCompaction {
             index_interval,
             min_threshold: min_threshold.unwrap_or(0.5),
             max_threshold: max_threshold.unwrap_or(1.5),
+            bucket_threshold: bucket_threshold.unwrap_or(4),
         }
     }
 
     fn merge(&self, sstables: Vec<SSTableData>) -> SSTableData {
         let mut target = sstables;
         let mut merged = Vec::new();
-        while merged.len() != 1 {
+        while target.len() != 1 {
             target.windows(2).for_each(|pair| {
                 let left = pair[0].clone();
                 let right = pair[1].clone();
@@ -66,7 +37,7 @@ impl SizeTieredCompaction {
             target = merged;
             merged = Vec::new();
         }
-        merged.pop().unwrap()
+        target.pop().unwrap()
     }
 
     // TODO: エラー処理
@@ -163,6 +134,10 @@ impl Compaction for SizeTieredCompaction {
             .iter()
             .map(|sstable| sstable.data().unwrap())
             .collect::<Vec<SSTableData>>();
+
+        if interestings.len() < self.bucket_threshold {
+            return Ok(());
+        }
 
         let compacted = self.merge(interestings);
         writer.write_with_index(&compacted, self.index_interval)?;

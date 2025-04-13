@@ -2,6 +2,7 @@ use std::fs::{read_dir, DirEntry};
 
 use lsmtree::{sstable::{compaction::Compaction, SSTableReader, SSTableWriter}, LSMTree, LSMTreeConf};
 
+#[derive(Debug, Clone)]
 pub struct MockCompaction {}
 
 impl Compaction for MockCompaction {
@@ -38,6 +39,8 @@ fn test_put_big_quantity() {
             None,
             Some(index_interval),
             Some("idx".to_owned()),
+            Some(300),         // コンパクション間隔: 5分（テストでは使用されない）
+            Some(false),       // コンパクションを無効化
     )).unwrap();
     /*
         * 大体1MBのデータを入れる
