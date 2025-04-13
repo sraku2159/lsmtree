@@ -1,8 +1,10 @@
 use libc::{sysconf, _SC_PAGESIZE};
 // chronoをラップして、タイムスタンプを取得する
 
-pub fn get_timestamp() -> i64 {
-    chrono::Local::now().timestamp_micros()
+pub fn get_timestamp() -> u64 {
+    let now = chrono::Utc::now();
+    let timestamp = now.timestamp_millis() as u64;
+    timestamp
 }
 
 pub fn get_page_size() -> usize {

@@ -18,59 +18,72 @@ pub type Key = String;
 pub type Value = String;
 
 #[derive(Debug)]
-pub struct LSMTreeConf<T>
+pub struct LSMTreeConf<T, U = DefaultTimeStampGenerator>
 where
     T: Compaction,
+    U: TimeStampGenerator,
 {
     compaction: T,
+    timestamp_generator: U,
     sst_dir: String,
     commitlog_dir: String,
     memtable_threshold: usize,
+    index_interval: usize,
 }
 
-impl<T: Compaction> LSMTreeConf<T> {
+impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
     pub fn new(
         compaction: T,
+        timestamp_generator: U,
         sst_dir: Option<String>,
         commitlog_dir: Option<String>,
         memtable_threshold: Option<usize>, 
-        ) -> LSMTreeConf<T>
+        index_interval: Option<usize>,
+        ) -> LSMTreeConf<T, U>
     {
         let sst_dir = sst_dir.unwrap_or("./.sst".to_string());
         let commitlog_dir = commitlog_dir.unwrap_or("./.commitlog".to_string());
         let memtable_threshold = memtable_threshold.unwrap_or(get_page_size());
+        let index_interval = index_interval.unwrap_or(get_page_size());
         LSMTreeConf {
             compaction,
+            timestamp_generator,
             sst_dir,
             commitlog_dir,
             memtable_threshold,
+            index_interval,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct LSMTree<T>
+pub struct LSMTree<T, U = DefaultTimeStampGenerator>
 where
-    T: Compaction
+    T: Compaction,
+    U: TimeStampGenerator,
 {
     memtable: MemTable,
     memtable_threshold: usize,
+    index_interval: usize,
     commitlog: CommitLog,
     sst_dir: String,
     compaction: T,
+    timestamp_generator: U,
 }
 
-impl<T: Compaction> LSMTree<T> {
-    pub fn new(conf: LSMTreeConf<T>) -> Result<LSMTree<T>, String> {
+impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
+    pub fn new(conf: LSMTreeConf<T, U>) -> Result<LSMTree<T, U>, String> {
         Self::create_dir(&conf.sst_dir)?;
         Self::create_dir(&conf.commitlog_dir)?;
 
         Ok(LSMTree {
             memtable: MemTable::new(),
             memtable_threshold: conf.memtable_threshold,
+            index_interval: conf.index_interval,
             commitlog: CommitLog::new(&conf.commitlog_dir)?,
             sst_dir: conf.sst_dir,
             compaction: conf.compaction,
+            timestamp_generator: conf.timestamp_generator,
         })
     }
 
@@ -93,18 +106,20 @@ impl<T: Compaction> LSMTree<T> {
     }
 
     pub fn put(&mut self, key: &str, value: &str) -> Result<Option<Value>, String> {
-        let ret = self.memtable.put(key, value);
-        self.commitlog.write_put(key, value);
+        let timestamp = self.timestamp_generator.get_timestamp();
+        let ret = self.memtable.put(key, value, timestamp);
+        self.commitlog.write_put(key, value, timestamp);
         if self.memtable.len() >= self.memtable_threshold {    
             // 大きいデータ構造なのでディープコピーの場合、パフォーマンスが悪い
             // ただ、現在の実装だと借用状態なので、ムーブができない
             let memtable = self.memtable.clone();              
             let dir = self.sst_dir.clone();
             let commitlog = self.commitlog.try_clone()?;
+            let index_interval = self.index_interval;
             self.memtable = MemTable::new();
             self.commitlog = CommitLog::new(self.commitlog.get_dir())?;
             spawn( move || {
-                let ret = Self::flush_memtable(&dir, memtable);
+                let ret = Self::flush_memtable(&dir, memtable, index_interval);
                 match ret {
                     Ok(_) => {
                         println!("Flushed memtable");
@@ -120,9 +135,9 @@ impl<T: Compaction> LSMTree<T> {
         Ok(ret.map(|v| v.to_string()))
     }
 
-    fn flush_memtable(dir: &str, memtable: MemTable) -> Result<(), String> {
+    fn flush_memtable(dir: &str, memtable: MemTable, index_interval: usize) -> Result<(), String> {
         let sstable = SSTableWriter::new(dir)?;
-        sstable.write(&memtable)?;
+        sstable.write(&memtable, index_interval)?;
         Ok(())
     }
 
@@ -131,6 +146,7 @@ impl<T: Compaction> LSMTree<T> {
             Some(value) => Ok(Some(value.to_string().clone())),
             None => {
                 for reader in self.reader_iter() {
+                    // FileNotFoundの場合は、retry (ただ、コンパクションによる影響でない可能性もあるので、リトライの回数を制限する)
                     match reader.read(key) {
                         Ok(None) => continue,
                         Ok(value) => return Ok(value),
@@ -160,6 +176,17 @@ impl<T: Compaction> LSMTree<T> {
 
     fn reader_iter(&self) -> SSTableReaderIter<T> {
         SSTableReaderIter::new(&self.sst_dir, &self.compaction)
+    }
+}
+
+pub trait TimeStampGenerator {
+    fn get_timestamp(&self) -> u64;
+}
+
+pub struct DefaultTimeStampGenerator {}
+impl TimeStampGenerator for DefaultTimeStampGenerator {
+    fn get_timestamp(&self) -> u64 {
+        utils::get_timestamp()
     }
 }
 

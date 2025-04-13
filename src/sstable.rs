@@ -10,21 +10,21 @@ use std::{collections::BTreeMap, fmt, ops::Index, vec};
 pub use reader::SSTableReader;
 pub use writer::SSTableWriter;
 
-use crate::{memtable::MemTable, utils::get_page_size};
+use crate::{memtable::MemTable, utils::{self, get_page_size}};
 
 #[derive(Debug, Clone)]
 pub struct SSTableHeader {
     pub header_size: u64,
-    pub index_size: u64,
+    pub data_size: u64,
 }
 
 impl SSTableHeader {
     pub const SIZE: u64 = 16;
 
-    pub fn new(header_size: u64, index_size: u64) -> SSTableHeader {
+    pub fn new(header_size: u64, data_size: u64) -> SSTableHeader {
         SSTableHeader {
             header_size,
-            index_size,
+            data_size,
         }
     }
 }
@@ -33,7 +33,7 @@ impl SSTableHeader {
     pub fn encode(&self) -> Vec<u8> {
         vec![
             self.header_size.to_ne_bytes().to_vec(),
-            self.index_size.to_ne_bytes().to_vec(),
+            self.data_size.to_ne_bytes().to_vec(),
         ].concat()
     }
 
@@ -41,12 +41,12 @@ impl SSTableHeader {
         let header_size = u64::from_ne_bytes(data[0..8]
                 .try_into()
                 .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
-        let index_size = u64::from_ne_bytes(data[8..16]
+        let data_size = u64::from_ne_bytes(data[8..16]
                 .try_into()
                 .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
         Ok(SSTableHeader {
             header_size,
-            index_size,
+            data_size,
         })
     }
 }
@@ -57,6 +57,54 @@ pub struct SSTableIndex(BTreeMap<Key, Offset>);
 impl SSTableIndex {
     fn new() -> SSTableIndex {
         SSTableIndex(BTreeMap::new())
+    }
+
+    fn from_memtable(memtable: &MemTable, interval: u64) -> Self {
+        if memtable.is_empty() {
+            return SSTableIndex::new();
+        }
+        let mut index = SSTableIndex::new();
+        let mut offset: u64 = 0;
+        let mut cnt = 0;
+
+        if let Some((first_key, _)) = memtable.iter().next() {
+            index.insert(first_key.clone(), offset);
+        }
+
+        for (k, v) in memtable.iter() {
+            if offset >= interval {
+                cnt += offset / interval;
+                offset %= interval;
+                index.insert(k.clone(), interval * cnt + offset);
+            }
+            let (v, ts) = match v {
+                crate::memtable::Value::Data(v, ts) => (Some(v.clone()), ts),
+                crate::memtable::Value::Tombstone(ts) => (None, ts),
+            };
+            offset += MemTable::encode_key_value(
+                &k, 
+                v.as_deref(),
+                ts,
+                
+            ).len() as u64;
+        }
+        index
+    }
+
+    fn from_sstable_data(data: &SSTableData, interval: u64) -> Self {
+        let mut index = SSTableIndex::new();
+        let mut offset: u64 = 0;
+        let mut cnt = 0;
+
+        for chunk in data.chunks.iter() {
+            if offset >= interval {
+                cnt += offset / interval;
+                offset %= interval;
+            }
+            index.insert(chunk.0[0].0.clone(), interval * cnt + offset);
+            offset += chunk.size() as u64;
+        }
+        index
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -160,51 +208,6 @@ impl FromIterator<(Key, Offset)> for SSTableIndex {
             index.insert(k, v);
         }
         index
-    }
-}
-
-impl From<&MemTable> for SSTableIndex {
-    fn from(memtable: &MemTable) -> SSTableIndex {
-        if memtable.is_empty() {
-            return SSTableIndex::new();
-        }
-        let mut index = SSTableIndex::new();
-        let mut offset: u64 = 0;
-        let mut page_cnt = 0;
-        let page_size = get_page_size() as u64;
-
-        let (k, _) = memtable.iter().next().unwrap();
-        index.0.insert(k.clone(), 0);
-        for (k, v) in memtable.iter() {
-            if offset >= page_size {
-                page_cnt += offset / page_size;
-                offset %= page_size;
-                index.0.insert(k.clone(), page_size * page_cnt + offset);
-            }
-            offset += MemTable::encode_key_value(&k, &v.to_string()).len() as u64;
-        }
-        index.iter().map(|(k, v)| {
-            (k.clone(), v + index.size() + SSTableHeader::SIZE)
-        }).collect()
-    }
-}
-
-impl TryFrom<&SSTableData> for SSTableIndex {
-    type Error = String;
-
-    fn try_from(data: &SSTableData) -> Result<Self, Self::Error> {
-        let keys = data.get_first_keys();
-        let index_size = keys.iter().fold(0, |acc, k| {
-            acc + k.len() as u64 + 2 * std::mem::size_of::<Offset>() as u64
-        });
-        let mut index = SSTableIndex::new();
-        let mut accm = index_size + SSTableHeader::SIZE;
-        keys.iter().enumerate().for_each(|(i, k)| {
-            index.insert(k.clone(), accm);
-            accm += data.chunk_len(i) as u64;
-        });
-
-        Ok(index)
     }
 }
 
@@ -518,11 +521,12 @@ impl<'a> Iterator for SSTableRecordsIterator<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct SSTableRecord(Key, Value);
+pub struct SSTableRecord(Key, Value, u64); // キー、値、タイムスタンプ
 
 impl SSTableRecord {
-    fn new(key: Key, value: Value) -> SSTableRecord {
-        SSTableRecord(key, value)
+    fn new(key: Key, value: Value, time: u64) -> SSTableRecord {
+        // 現在のタイムスタンプを取得し、u64に変換
+        SSTableRecord(key, value, time)
     }
 
     fn key(&self) -> &Key {
@@ -533,14 +537,21 @@ impl SSTableRecord {
         &self.1
     }
 
+    fn timestamp(&self) -> u64 {
+        self.2
+    }
+
     fn encode(&self) -> Vec<u8> {
         let default_value = "".to_owned();
         let value = self.1.as_ref().unwrap_or(&default_value);
         let mut buf = Vec::new();
+        // キー長、キー、値長、値、タイムスタンプの順に書き込む
         buf.extend_from_slice(&self.0.len().to_ne_bytes());
         buf.extend_from_slice(self.0.as_bytes());
         buf.extend_from_slice(&value.len().to_ne_bytes());
         buf.extend_from_slice(value.as_bytes());
+        // タイムスタンプを最後に書き込む
+        buf.extend_from_slice(&self.2.to_ne_bytes());
         buf
     }
 
@@ -562,14 +573,21 @@ impl SSTableRecord {
                 }
             })
             .map_err(|e| e.to_string())?;
-        let len = std::mem::size_of::<u64>() * 2 + key_len as usize + value_len as usize;
-        Ok((SSTableRecord(key, value), len))
+        
+        // タイムスタンプを最後から読み込む
+        let timestamp_start = 16 + key_len as usize + value_len as usize;
+        let timestamp = u64::from_ne_bytes(data[timestamp_start..(timestamp_start + 8)]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+        
+        let len = std::mem::size_of::<u64>() * 3 + key_len as usize + value_len as usize;
+        Ok((SSTableRecord(key, value, timestamp), len))
     }
 
     fn size(&self) -> usize {
         self.0.len()
             + self.1.as_ref().map_or(0, |v| v.len())
-            + std::mem::size_of::<u64>() * 2
+            + std::mem::size_of::<u64>() * 3 // タイムスタンプ分を追加
     }
 }
 

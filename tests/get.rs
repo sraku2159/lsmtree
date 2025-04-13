@@ -1,6 +1,7 @@
+use core::time;
 use std::fs;
 
-use lsmtree::{sstable::compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, LSMTree, LSMTreeConf};
+use lsmtree::{sstable::compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, utils::get_page_size, LSMTree, LSMTreeConf};
 
 pub struct MockCompaction {}
 
@@ -26,6 +27,14 @@ impl Compaction for MockCompaction {
     }
 }
 
+struct MockTimeStampGenerator;
+
+impl lsmtree::TimeStampGenerator for MockTimeStampGenerator {
+    fn get_timestamp(&self) -> u64 {
+        123_456_789_012
+    }
+}
+
 fn tear_down(sst_dir: &str, commitlog_dir: &str) {
     std::fs::remove_dir_all(sst_dir).unwrap();
     std::fs::remove_dir_all(commitlog_dir).unwrap();
@@ -36,12 +45,15 @@ fn test_get_with_size_tiered() {
     let data = [("key1", "value1"), ("key2", "value2"), ("key3", "value3")];
     let sst_dir = "./.test_get_with_size_tiered_sst";
     let commitlog_dir = "./.test_get_with_size_tiered_commitlog";
+    let index_interval = get_page_size();
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             SizeTieredCompaction::new(),
+            MockTimeStampGenerator {},
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
+            Some(index_interval),
     )).unwrap();
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
@@ -54,15 +66,19 @@ fn test_get_with_size_tiered() {
 
 #[test]
 fn test_get_with_size_leveled() {
+    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let data = [("key1", "value1"), ("key2", "value2"), ("key3", "value3")];
     let sst_dir = "./.test_get_with_leveled_sst";
     let commitlog_dir = "./.test_get_with_leveled_commitlog";
+    let index_interval = get_page_size();
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             LeveledCompaction::new(),
+            MockTimeStampGenerator {},
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
+            Some(index_interval),
     )).unwrap();
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
@@ -75,17 +91,26 @@ fn test_get_with_size_leveled() {
 
 #[test]
 fn test_get_big_quantity() {
+    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let sst_dir = "./.test_get_big_quantity_sst";
     let commitlog_dir = "./.test_get_big_quantity_commitlog";
-    std::fs::remove_dir_all(sst_dir).unwrap();
-    std::fs::remove_dir_all(commitlog_dir).unwrap();
+    let index_interval = get_page_size();
+
+    if fs::exists(sst_dir).unwrap() {
+        fs::remove_dir_all(sst_dir).unwrap();
+    }
+    if fs::exists(commitlog_dir).unwrap() {
+        fs::remove_dir_all(commitlog_dir).unwrap();
+    }
 
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             MockCompaction {},
+            MockTimeStampGenerator {},
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
+            Some(index_interval),
     )).unwrap();
     /*
         * 大体1MBのデータを入れる
@@ -98,8 +123,11 @@ fn test_get_big_quantity() {
     for i in 0..104857 {
         assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i)).unwrap(), None);
     }
+    let now = std::time::Instant::now();
+    assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
     for i in 0..104857 {
         assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i))));
     }
+    println!("Elapsed time: {:?}", now.elapsed());
     tear_down(sst_dir, commitlog_dir);
 }

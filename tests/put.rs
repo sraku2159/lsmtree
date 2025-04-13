@@ -16,13 +16,18 @@ impl Compaction for MockCompaction {
     fn get_sstables(&self, dir: &String) -> Vec<lsmtree::sstable::SSTableReader> {
         let mut sstables = Vec::new();
         let files = fs::read_dir(dir).unwrap();
-        for file in files {
-            let file = file.unwrap();
-            let path = file.path();
+        for file in files { let file = file.unwrap(); let path = file.path();
             let sstable = lsmtree::sstable::SSTableReader::new(path.to_str().unwrap()).unwrap();
             sstables.push(sstable);
         }
         sstables
+    }
+}
+
+struct MockTimeStampGenerator;
+impl lsmtree::TimeStampGenerator for MockTimeStampGenerator {
+    fn get_timestamp(&self) -> u64 {
+        123_456_789_012
     }
 }
 
@@ -33,14 +38,18 @@ fn tear_down(sst_dir: &str, commitlog_dir: &str) {
 
 #[test]
 fn test_put_big_quantity() {
+    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let sst_dir = "./.test_put_big_quantity_sst";
     let commitlog_dir = "./.test_put_big_quantity_commitlog";
+    let index_interval = lsmtree::utils::get_page_size();
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             MockCompaction{},
+            MockTimeStampGenerator {},
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
+            Some(index_interval),
     )).unwrap();
     /*
         * 大体1MBのデータを入れる

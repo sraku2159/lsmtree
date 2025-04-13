@@ -1,3 +1,4 @@
+use core::time;
 use std::{fs::{remove_file, File}, io::Write, time::SystemTime};
 
 use crate::utils;
@@ -37,14 +38,15 @@ impl CommitLog {
     // bufを入れてもいい
     // ページサイズを超えるようであれば、パディングを入れてもいい
     // 全てパフォーマンスを計測してから決める
-    fn append(&mut self, entry: &CommitLogEntry) {
-        let buf = entry.encode();
-        self.file.write_all(&buf).unwrap();
+    fn append(&mut self, entry: &CommitLogEntry, timestamp: u64) {
+        let mut buf = entry.encode();
+        buf.extend_from_slice(&timestamp.to_ne_bytes());
+        self.file.write_all(&buf).map_err(|e| e.to_string()).unwrap();
     }
 
-    pub fn write_put(&mut self, key: &str, value: &str) {
+    pub fn write_put(&mut self, key: &str, value: &str, timestamp: u64) {
         let entry = CommitLogEntry::new("PUT", key, Some(value));
-        self.append(&entry);
+        self.append(&entry, timestamp);
     }
 
     pub fn delete_log(&self) -> Result<(), String> {

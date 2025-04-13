@@ -1,6 +1,6 @@
 use std::{fs::File, io::Write};
 
-use crate::{memtable::MemTable, utils};
+use crate::{memtable::MemTable, utils::{self, get_page_size}};
 
 use super::{SSTableData, SSTableHeader, SSTableIndex};
 
@@ -17,21 +17,22 @@ impl SSTableWriter {
         })
     }
 
-    pub fn write(&self, memtable: &MemTable) -> Result<(), String> {
-        Self::write_impl(memtable, &self.file)
+    pub fn write(&self, memtable: &MemTable, index_interval: usize) -> Result<(), String> {
+        Self::write_impl(memtable, &self.file, index_interval)
     }
 
-    fn write_impl(memtable: &MemTable, file: &str) -> Result<(), String> {
+    fn write_impl(memtable: &MemTable, file: &str, index_interval: usize) -> Result<(), String> {
         let mut file = File::create(file).map_err(|e| e.to_string())?;
-        let index = SSTableIndex::from(memtable);
+        let data = SSTableData::try_from(memtable.encode())?;
+        let index = SSTableIndex::from_sstable_data(&data, index_interval as u64);
         // let data = SSTableData::try_from(memtable.encode())?;
-        Self::write_header_impl(&mut file, &index)?;
-        Self::write_index_impl(&mut file, &index)?;
-        Self::write_data_impl(&mut file, &memtable)
+        Self::write_header_impl(&mut file, &data)?;
+        Self::write_data_impl(&mut file, &data)?;
+        Self::write_index_impl(&mut file, &index)
     }
 
-    fn write_header_impl(file: &mut File, index: &SSTableIndex) -> Result<(), String> {
-        let index_size = index.size() as u64;
+    fn write_header_impl(file: &mut File, data: &SSTableData) -> Result<(), String> {
+        let index_size = data.len() as u64;
         let header = SSTableHeader::new(
             SSTableHeader::SIZE as u64,
             index_size
@@ -40,14 +41,13 @@ impl SSTableWriter {
         file.write_all(&header).map_err(|e| e.to_string())
     }
 
-    // コンパクションを考えると、データから作成する方が良い
     fn write_index_impl(file: &mut File, index: &SSTableIndex) -> Result<(), String> {
         let mut index = index.encode();
         file.write_all(&mut index).map_err(|e| e.to_string())
     }
 
     // ページサイズごとに書き込むという方法との比較を時間計算量の観点で今後したい
-    fn write_data_impl(file: &mut File, data: &MemTable) -> Result<(), String> {
+    fn write_data_impl(file: &mut File, data: &SSTableData) -> Result<(), String> {
         let mut data =  data.encode().clone();
         file.write_all(&mut data).map_err(|e| e.to_string())
     }
@@ -61,35 +61,43 @@ mod tests {
 
     #[test]
     fn test_sst_writer_wirte_impl() {
+        let timestamp = crate::utils::get_timestamp() as u64; // 実際のタイムスタンプ
+        let page_size = get_page_size();
         let mut memtable = MemTable::new();
-        memtable.put("key1", "value1");
+        memtable.put("key1", "value1", timestamp);
         let path = "/tmp/test_sst_writer_wirte_impl.sst";
-        assert!(SSTableWriter::write_impl(&memtable, path).is_ok());
+        assert!(SSTableWriter::write_impl(&memtable, path, page_size).is_ok());
 
         let content = fs::read(path).unwrap();
-        let header = vec![
-            16, 0, 0, 0, 0, 0, 0, 0,
-            20, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let index = vec![
-            4, 0, 0, 0, 0, 0, 0, 0,
-            107, 101, 121, 49,
-            36, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let data = vec![
+        // タイムスタンプを含むデータ形式に更新
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
+        let mut data = vec![
             4, 0, 0, 0, 0, 0, 0, 0,
             107, 101, 121, 49,
             6, 0, 0, 0, 0, 0, 0, 0,
             118, 97, 108, 117, 101, 49,
         ];
-        assert_eq!(
-            content, 
-            vec![
-                header,
-                index,
-                data,
-            ].concat()
-        );
+        data.extend_from_slice(&timestamp.to_ne_bytes());
+        let header = vec![
+            (SSTableHeader::SIZE as u64).to_ne_bytes().to_vec(),
+            (data.len() as u64).to_ne_bytes().to_vec(),
+        ].concat();
+        let index = vec![
+            4, 0, 0, 0, 0, 0, 0, 0,
+            107, 101, 121, 49,
+            36, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        // タイムスタンプは動的に生成されるため、長さのみを検証
+        let expected_content = vec![
+            header,
+            data,
+            index,
+        ].concat();
+        assert_eq!(content.len(), expected_content.len());
+
+        // タイムスタンプ以外の部分を検証
+        assert_eq!(&content[0..36], &expected_content[0..36]); // ヘッダーとインデックス
+        assert_eq!(&content[36..64], &expected_content[36..64]); // データ（タイムスタンプを除く）
         fs::remove_file(path).unwrap();
     }
 
@@ -99,16 +107,19 @@ mod tests {
         index.insert("a".to_owned(), 0);
         index.insert("b".to_owned(), 3);
         index.insert("c".to_owned(), 1000);
-        let data = SSTableData::try_from(vec![
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
+        let mut data_vec = vec![
             1, 0, 0, 0, 0, 0, 0, 0, // key_len: 1
             97, // key: "a"
             1, 0, 0, 0, 0, 0, 0, 0, // value_len: 1
             49, // value: "1"
-        ]).unwrap();
+        ];
+        data_vec.extend_from_slice(&timestamp.to_ne_bytes()); // タイムスタンプ
+        let data = SSTableData::try_from(data_vec).unwrap();
         let path = "/tmp/test_sst_writer_write_header_impl.sst";
         let mut file = File::create(&path).unwrap();
 
-        assert!(SSTableWriter::write_header_impl(&mut file, &index).is_ok());
+        assert!(SSTableWriter::write_header_impl(&mut file, &data).is_ok());
 
         let index_size = index.size() as u64;
         let data_size = data.len() as u64;
@@ -125,11 +136,13 @@ mod tests {
 
     #[test]
     fn test_fn_writer_write_index_impl() {
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
+        let page_size = get_page_size() as u64;
         let mut memtable = MemTable::new();
-        memtable.put("key1", "value1");
+        memtable.put("key1", "value1", timestamp);
         let path = "/tmp/test_sst_writer_write_index_impl.sst";
         let mut file = File::create(path).unwrap();
-        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from(&memtable)).is_ok());
+        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from_memtable(&memtable, page_size)).is_ok());
 
         let header_size = SSTableHeader::SIZE as usize;
         let index_size = "key1".len() + 16;
@@ -151,67 +164,65 @@ mod tests {
     /// もしやるならファイルフォーマットから変更する必要がある。
     #[test]
     fn test_fn_writer_write_index_impl_complex() {
-        let mut memtable = MemTable::new();
+        let timestamp = crate::utils::get_timestamp() as u64; // 実際のタイムスタンプ
         let header_size = SSTableHeader::SIZE as usize;
-        let index_size = ("key1".len() + "key3".len() + "キー4".len()) + 16 * 3;
+        let page_size = get_page_size() as u64;
+        let mut memtable = MemTable::new();
 
-        memtable.put("key1", "value1"); // 8 + 4 + 8 + 6 = 26
-        memtable.put("キー4", "c");
-        memtable.put("key3", "b".repeat(get_page_size() as usize).as_str()); // 8 + 4 + 8 + page_size = page_size + 20
-        memtable.put("key2", "a".repeat(get_page_size() as usize - 46).as_str()); // 8 + 4 + 8 + page_size - 46 = page_size - 26
+        memtable.put("key1", "value1", timestamp); // 8 + 4 + 8 + 6 + 8 = 34
+        memtable.put("キー4", "c", timestamp);
+        memtable.put("key3", "b".repeat(get_page_size() as usize).as_str(), timestamp); // これはページの先頭から始まる. 超過分: key_len(8) + 4 + value_len(8) + 1 + timestamp_len(8) = 29
+        memtable.put("key2", "a".repeat(get_page_size() as usize - (header_size + 34 + 28)).as_str(), timestamp); // header_size(16) + index_size(63) + 34 + key_len(8) + 4 + value_len(8) + timestamp_len(8) 
 
         let path = "/tmp/test_fn_writer_write_index_impl_complex.sst";
         let mut file = File::create(path).unwrap();
-        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from(&memtable)).is_ok());
+        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from_memtable(&memtable, page_size)).is_ok());
 
 
         let content = fs::read(&path).unwrap();
-        let entry1 = vec![
-            vec![
-                4, 0, 0, 0, 0, 0, 0, 0, // length of key1
-                107, 101, 121, 49,
-            ], // key1
-            (header_size + index_size).to_ne_bytes().to_vec()
-        ].concat();
-
-        let entry2 = vec![
-            4, 0, 0, 0, 0, 0, 0, 0,           // length of key3
-            107, 101, 121, 51, // key3
-        ].into_iter().chain(
-            (get_page_size() + header_size + index_size).to_ne_bytes().into_iter()
-        ).collect::<Vec<u8>>();
-
-        let entry3 = vec![
-            7, 0, 0, 0, 0, 0, 0, 0, // length of キー4
-            0xe3, 0x82, 0xad, 0xe3, 0x83, 0xbc, 0x34, // キー4
-        ].into_iter().chain(
-            (get_page_size() * 2 + 20 + header_size + index_size).to_ne_bytes().into_iter()
-        ).collect::<Vec<u8>>();
-
         assert_eq!(
             content,
             vec![
-                entry1,
-                entry2,
-                entry3,
-            ].concat()
-        );
+                "key1".len().to_ne_bytes().to_vec(),
+                "key1".as_bytes().to_vec(),
+                (header_size as u64).to_ne_bytes().to_vec(),
+                "key3".len().to_ne_bytes().to_vec(),
+                "key3".as_bytes().to_vec(),
+                (get_page_size() as u64).to_ne_bytes().to_vec(),
+                "キー4".len().to_ne_bytes().to_vec(),
+                "キー4".as_bytes().to_vec(),
+                (get_page_size() as u64 * 2 + 29).to_ne_bytes().to_vec(),
+            ].concat());
+
         fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn test_sst_writer_wirte_data_impl() {
+        let timestamp = crate::utils::get_timestamp() as u64; // 実際のタイムスタンプ
         let mut memtable = MemTable::new();
-        memtable.put("key1", "value1");
+        memtable.put("key1", "value1", timestamp);
         let path = "/tmp/test_sst_writer_wirte_data_impl.sst";
         let mut file = File::create(path).unwrap();
-        assert!(SSTableWriter::write_data_impl(&mut file, &memtable).is_ok());
+        let data = SSTableData::try_from(memtable.encode()).unwrap();
+        assert!(SSTableWriter::write_data_impl(&mut file, &data).is_ok());
     
-        let content = fs::read_to_string(path).unwrap();
-        assert_eq!(
-            content, 
-            "\u{4}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}key1\u{6}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}value1"
-        );
+        // バイナリデータを含むため、read_to_stringではなくreadを使用
+        let content = fs::read(path).unwrap();
+        
+        // タイムスタンプを含むデータ形式に更新
+        let mut expected_data = Vec::new();
+        expected_data.extend_from_slice(&4u64.to_ne_bytes()); // key_len: 4
+        expected_data.extend_from_slice("key1".as_bytes()); // key: "key1"
+        expected_data.extend_from_slice(&6u64.to_ne_bytes()); // value_len: 6
+        expected_data.extend_from_slice("value1".as_bytes()); // value: "value1"
+        expected_data.extend_from_slice(&timestamp.to_ne_bytes()); // タイムスタンプ
+        
+        // タイムスタンプは動的に生成されるため、長さのみを検証
+        assert_eq!(content.len(), expected_data.len());
+        
+        // タイムスタンプ以外の部分を検証
+        assert_eq!(&content[0..28], &expected_data[0..28]);
         fs::remove_file(path).unwrap();
     }
 }

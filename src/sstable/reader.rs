@@ -48,7 +48,7 @@ impl SSTableReader {
     fn read_impl(file: &str, header: &SSTableHeader, key: &str) -> Result<Value, String> {
         let _ = header;
         let (header, offset) = Self::read_header(file)?;
-        let index = Self::read_index(file, offset, header.index_size as usize)?;
+        let index = Self::read_index(file, offset, header.data_size as usize)?;
         if let Some((begin, end)) = index.find_key_range(&key.to_owned()) {
             let end = end.unwrap_or(
                 File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
@@ -112,7 +112,7 @@ mod tests{
         let sst_reader = SSTableReader::new(path).unwrap();
         assert_eq!(sst_reader.file, path);
         assert_eq!(sst_reader.header.header_size, header_size);
-        assert_eq!(sst_reader.header.index_size, index_size);
+        assert_eq!(sst_reader.header.data_size, index_size);
     
         fs::remove_file(path).unwrap();
     }
@@ -136,7 +136,7 @@ mod tests{
         let sst_reader = SSTableReader::new(path).unwrap();
         assert_eq!(sst_reader.file, path);
         assert_eq!(sst_reader.header.header_size, header_size);
-        assert_eq!(sst_reader.header.index_size, index_size);
+        assert_eq!(sst_reader.header.data_size, index_size);
 
         fs::remove_file(path).unwrap();
     }    
@@ -149,6 +149,7 @@ mod tests{
             ("key2", "value2"),
             ("key3", "value3"),
         ];
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
         let data = vec![
             kvs.iter().map(|(k, v)| {
                 let k = k.as_bytes();
@@ -160,6 +161,7 @@ mod tests{
                     k.to_vec(),
                     v_len.to_ne_bytes().to_vec(),
                     v.to_vec(),
+                    timestamp.to_ne_bytes().to_vec(), // タイムスタンプを追加
                 ].concat()
             }).flatten().collect::<Vec<u8>>(),
         ].concat();
@@ -199,6 +201,7 @@ mod tests{
         ];
         
         // データ部分の作成
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
         let data = kvs.iter().map(|(k, v)| {
             let k = k.as_bytes();
             let v = v.as_ref().map_or("".as_bytes(), |v| v.as_bytes());
@@ -209,6 +212,7 @@ mod tests{
                 k.to_vec(),
                 v_len.to_ne_bytes().to_vec(),
                 v.to_vec(),
+                timestamp.to_ne_bytes().to_vec(), // タイムスタンプを追加
             ].concat()
         }).collect::<Vec<Vec<u8>>>().concat();
         
@@ -254,6 +258,7 @@ mod tests{
         ];
         
         // データ部分の作成
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
         let data = kvs.iter().map(|(k, v)| {
             let k = k.as_bytes();
             let v = v.as_bytes();
@@ -264,6 +269,7 @@ mod tests{
                 k.to_vec(),
                 v_len.to_ne_bytes().to_vec(),
                 v.to_vec(),
+                timestamp.to_ne_bytes().to_vec(), // タイムスタンプを追加
             ].concat()
         }).collect::<Vec<Vec<u8>>>().concat();
         
@@ -313,6 +319,7 @@ mod tests{
         ];
         
         // データ部分の作成
+        let timestamp = 12345u64; // テスト用の固定タイムスタンプ
         let data = kvs.iter().map(|(k, v)| {
             let k = k.as_bytes();
             let v = v.as_bytes();
@@ -323,6 +330,7 @@ mod tests{
                 k.to_vec(),
                 v_len.to_ne_bytes().to_vec(),
                 v.to_vec(),
+                timestamp.to_ne_bytes().to_vec(), // タイムスタンプを追加
             ].concat()
         }).collect::<Vec<Vec<u8>>>().concat();
         
