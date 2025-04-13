@@ -3,7 +3,7 @@ pub mod reader;
 pub mod writer;
 
 type Key = String;
-type Value = Option<String>;
+type Value = (Option<String>, u64); // (value, timestamp)
 type Offset = u64;
 
 use std::{collections::BTreeMap, fmt, ops::Index, vec};
@@ -337,8 +337,7 @@ impl From<MemTable> for SSTableData {
             };
             let record = SSTableRecord::new(
                 record.0.clone(), 
-                value.0,
-                value.1,
+                value,
             );
             data.push(record).unwrap();   
         }
@@ -524,12 +523,12 @@ impl<'a> Iterator for SSTableRecordsIterator<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct SSTableRecord(Key, Value, u64); // キー、値、タイムスタンプ
+pub struct SSTableRecord(Key, Value); // キー、値、タイムスタンプ
 
 impl SSTableRecord {
-    fn new(key: Key, value: Value, time: u64) -> SSTableRecord {
+    fn new(key: Key, value: Value) -> SSTableRecord {
         // 現在のタイムスタンプを取得し、u64に変換
-        SSTableRecord(key, value, time)
+        SSTableRecord(key, value)
     }
 
     fn key(&self) -> &Key {
@@ -541,12 +540,12 @@ impl SSTableRecord {
     }
 
     fn timestamp(&self) -> u64 {
-        self.2
+        self.1.1
     }
 
     fn encode(&self) -> Vec<u8> {
         let default_value = "".to_owned();
-        let value = self.1.as_ref().unwrap_or(&default_value);
+        let value = self.value().0.as_ref().unwrap_or(&default_value);
         let mut buf = Vec::new();
         // キー長、キー、値長、値、タイムスタンプの順に書き込む
         buf.extend_from_slice(&self.0.len().to_ne_bytes());
@@ -554,7 +553,7 @@ impl SSTableRecord {
         buf.extend_from_slice(&value.len().to_ne_bytes());
         buf.extend_from_slice(value.as_bytes());
         // タイムスタンプを最後に書き込む
-        buf.extend_from_slice(&self.2.to_ne_bytes());
+        buf.extend_from_slice(&self.value().1.to_ne_bytes());
         buf
     }
 
@@ -584,12 +583,12 @@ impl SSTableRecord {
             .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
         
         let len = std::mem::size_of::<u64>() * 3 + key_len as usize + value_len as usize;
-        Ok((SSTableRecord(key, value, timestamp), len))
+        Ok((SSTableRecord(key, (value, timestamp)), len))
     }
 
     fn size(&self) -> usize {
-        self.0.len()
-            + self.1.as_ref().map_or(0, |v| v.len())
+        self.key().len()
+            + self.value().0.as_ref().map_or(0, |v| v.len())
             + std::mem::size_of::<u64>() * 3 // タイムスタンプ分を追加
     }
 }

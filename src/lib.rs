@@ -156,18 +156,37 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
                 }
             },
             None => {
-                println!("Get from sstable");
-                for reader in self.reader_iter() {
-                    // FileNotFoundの場合は、retry (ただ、コンパクションによる影響でない可能性もあるので、リトライの回数を制限する)
-                    match reader.read(key) {
-                        Ok(None) => continue,
-                        Ok(value) => return Ok(value),
-                        Err(e) => return Err(e),
-                    }
-                }
-                Ok(None)
+                self.get_from_sstable(key)
             }
         }
+    }
+
+    fn get_from_sstable(&self, key: &str) -> Result<Option<Value>, String> {
+        let mut candidate = vec![];
+        for reader in self.reader_iter() {
+            match reader.read(key) {
+                Ok(None) => continue,
+                Ok(value) => {
+                    candidate.push(value.unwrap());
+                },
+                Err(e) => return Err(e),
+            }
+        }
+        if candidate.is_empty() {
+            return Ok(None);
+        }
+        candidate.sort_by(|a, b| {
+            let a = a.1;
+            let b = b.1;
+            if a == b {
+                return std::cmp::Ordering::Equal;
+            }
+            if a > b {
+                return std::cmp::Ordering::Greater;
+            }
+            std::cmp::Ordering::Less
+        });
+        Ok(candidate.last().unwrap().0.clone())
     }
 
     pub fn get_memtable(&self) -> &MemTable {

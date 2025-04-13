@@ -43,11 +43,11 @@ impl SSTableReader {
         std::path::Path::new(&self.file).exists()
     }
 
-    pub fn read(&self, key: &str) -> Result<Value, String> {
+    pub fn read(&self, key: &str) -> Result<Option<Value>, String> {
         Self::read_impl(&self.file, &self.index_file, key)
     }
 
-    fn read_impl(file: &str, index_file: &str, key: &str) -> Result<Value, String> {
+    fn read_impl(file: &str, index_file: &str, key: &str) -> Result<Option<Value>, String> {
         // let (header, offset) = Self::read_header(file)?;
         let idx_file_size = std::fs::metadata(index_file).map_err(|e| e.to_string())?.len() as usize;
         let index = Self::read_index(index_file, 0, idx_file_size)?;
@@ -56,7 +56,7 @@ impl SSTableReader {
                 File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
             );
             let data = Self::read_data(file, begin, end)?;
-            let value = data.get(&key.to_owned(), None).cloned().flatten();
+            let value = data.get(&key.to_owned(), None).cloned();
             return Ok(value)
         }
         Ok(None)
@@ -170,7 +170,7 @@ mod tests{
         let sst_reader = SSTableReader::new(path, &idx_path).unwrap();
         for (k, v) in kvs {
             let value = sst_reader.read(k).unwrap();
-            assert_eq!(value, Some(v.to_string()));
+            assert_eq!(value, Some((Some(v.to_string()), timestamp)));
         }
         fs::remove_file(path).unwrap();
     }
@@ -223,11 +223,11 @@ mod tests{
         
         // 削除されたキーの読み取りテスト
         let value = sst_reader.read("key2").unwrap();
-        assert_eq!(value, None); // 削除されたキーはNoneが返される
+        assert_eq!(value, Some((None, timestamp))); // 削除されたキーはNoneが返される
         
         // 通常のキーの読み取りテスト
         let value = sst_reader.read("key1").unwrap();
-        assert_eq!(value, Some("value1".to_string()));
+        assert_eq!(value, Some((Some("value1".to_string()), timestamp)));
         
         fs::remove_file(path).unwrap();
     }
@@ -283,7 +283,7 @@ mod tests{
         
         // 存在するキーの読み取りテスト
         let value = sst_reader.read("key1").unwrap();
-        assert_eq!(value, Some("value1".to_string()));
+        assert_eq!(value, Some((Some("value1".to_string()), timestamp)));
         
         fs::remove_file(path).unwrap();
     }
@@ -339,11 +339,11 @@ mod tests{
         
         // 大きなデータの読み取りテスト
         let value = sst_reader.read("key2").unwrap();
-        assert_eq!(value, Some(big_value));
+        assert_eq!(value, Some((Some(big_value), timestamp))); // 大きなデータは正しく読み取れる
 
         // 通常のキーの読み取りテスト
         let value = sst_reader.read("key1").unwrap();
-        assert_eq!(value, Some("value1".to_string()));
+        assert_eq!(value, Some((Some("value1".to_string()), timestamp)));
         
         fs::remove_file(path).unwrap();
     }

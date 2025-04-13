@@ -378,9 +378,9 @@ fn test_sst_data_try_from_u8_slice() {
 
     // タイムスタンプを含むため、データサイズが増加
     assert_eq!(data.len(), 78); // 3 * (8(timestamp) + 8(key_len) + 1(key) + 8(value_len) + 1(value)) = 78
-    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&Some("1".to_owned())));
-    assert_eq!(data.get(&"b".to_owned(), Some(0)), Some(&Some("2".to_owned())));
-    assert_eq!(data.get(&"c".to_owned(), None), Some(&Some("3".to_owned())));
+    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&(Some("1".to_owned()), timestamp)));
+    assert_eq!(data.get(&"b".to_owned(), Some(0)), Some(&(Some("2".to_owned()), timestamp)));
+    assert_eq!(data.get(&"c".to_owned(), None), Some(&(Some("3".to_owned()), timestamp)));
 }
 
 #[test]
@@ -412,17 +412,17 @@ fn test_sst_data_iter() {
     // イテレータから取得したレコードを検証
     let record = iter.next().unwrap();
     assert_eq!(record.key(), &"a".to_owned());
-    assert_eq!(record.value(), &Some("1".to_owned()));
+    assert_eq!(record.value(), &(Some("1".to_owned()), timestamp));
     assert_eq!(record.timestamp(), timestamp);
 
     let record = iter.next().unwrap();
     assert_eq!(record.key(), &"b".to_owned());
-    assert_eq!(record.value(), &Some("2".to_owned()));
+    assert_eq!(record.value(), &(Some("2".to_owned()), timestamp));
     assert_eq!(record.timestamp(), timestamp);
 
     let record = iter.next().unwrap();
     assert_eq!(record.key(), &"c".to_owned());
-    assert_eq!(record.value(), &Some("3".to_owned()));
+    assert_eq!(record.value(), &(Some("3".to_owned()), timestamp));
     assert_eq!(record.timestamp(), timestamp);
 
     assert_eq!(iter.next(), None);
@@ -451,9 +451,9 @@ fn test_sst_records_get_existed_key() {
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat()).unwrap();
 
-    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&Some("1".to_owned())));
-    assert_eq!(data.get(&"b".to_owned(), Some(0)), Some(&Some("2".to_owned())));
-    assert_eq!(data.get(&"c".to_owned(), Some(0)), Some(&Some("3".to_owned())));
+    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&(Some("1".to_owned()), timestamp)));
+    assert_eq!(data.get(&"b".to_owned(), Some(0)), Some(&(Some("2".to_owned()), timestamp)));
+    assert_eq!(data.get(&"c".to_owned(), Some(0)), Some(&(Some("3".to_owned()), timestamp)));
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn test_sst_records_get_deleted_key() {
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat()).unwrap();
 
-    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&None));
+    assert_eq!(data.get(&"a".to_owned(), Some(0)), Some(&(None, timestamp)));
 }
 
 #[test]
@@ -520,14 +520,14 @@ fn test_sst_records_get_many_chunks_with_small_record() {
     for i in 0..chunk_size {
         let key = i.to_string();
         let value = i.to_string();
-        assert_eq!(data.get(&key, None), Some(&Some(value)));
+        assert_eq!(data.get(&key, None), Some(&(Some(value), timestamp)));
     }
 }
 
 #[test]
 fn test_sst_record_encode() {
     let timestamp = 12345u64; // テスト用の固定タイムスタンプ
-    let record = SSTableRecord::new("a".to_owned(), Some("1".to_owned()), timestamp);
+    let record = SSTableRecord::new("a".to_owned(), (Some("1".to_owned()), timestamp));
     let encoded = record.encode();
     let mut buf = Vec::new();
     buf.extend_from_slice(&1u64.to_ne_bytes());
@@ -541,7 +541,7 @@ fn test_sst_record_encode() {
 #[test]
 fn test_sst_record_encode_deleted() {
     let timestamp = 12345u64; // テスト用の固定タイムスタンプ
-    let record = SSTableRecord::new("a".to_owned(), None, timestamp);
+    let record = SSTableRecord::new("a".to_owned(), (None, timestamp));
     let encoded = record.encode();
     let mut buf = Vec::new();
     buf.extend_from_slice(&1u64.to_ne_bytes());
@@ -562,7 +562,7 @@ fn test_sst_record_decode_inserted() {
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat();
     let decoded = SSTableRecord::decode(&encoded).unwrap();
-    assert_eq!(decoded.0, SSTableRecord("a".to_owned(), Some("1".to_owned()), timestamp));
+    assert_eq!(decoded.0, SSTableRecord("a".to_owned(), (Some("1".to_owned()), timestamp)));
     assert_eq!(decoded.1, 26);
 }
 
@@ -576,6 +576,6 @@ fn test_sst_record_decode_deleted() {
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat();
     let decoded = SSTableRecord::decode(&encoded).unwrap();
-    assert_eq!(decoded.0, SSTableRecord("a".to_owned(), None, timestamp));
+    assert_eq!(decoded.0, SSTableRecord("a".to_owned(), (None, timestamp)));
     assert_eq!(decoded.1, 25);
 }
