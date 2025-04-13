@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, fmt, ops::Index, vec};
 pub use reader::SSTableReader;
 pub use writer::SSTableWriter;
 
-use crate::{memtable::MemTable, utils::{self, get_page_size}};
+use crate::{memtable::MemTable, utils::get_page_size};
 
 #[derive(Debug, Clone)]
 pub struct SSTableHeader {
@@ -57,38 +57,6 @@ pub struct SSTableIndex(BTreeMap<Key, Offset>);
 impl SSTableIndex {
     fn new() -> SSTableIndex {
         SSTableIndex(BTreeMap::new())
-    }
-
-    fn from_memtable(memtable: &MemTable, interval: u64) -> Self {
-        if memtable.is_empty() {
-            return SSTableIndex::new();
-        }
-        let mut index = SSTableIndex::new();
-        let mut offset: u64 = 0;
-        let mut cnt = 0;
-
-        if let Some((first_key, _)) = memtable.iter().next() {
-            index.insert(first_key.clone(), offset);
-        }
-
-        for (k, v) in memtable.iter() {
-            if offset >= interval {
-                cnt += offset / interval;
-                offset %= interval;
-                index.insert(k.clone(), interval * cnt + offset);
-            }
-            let (v, ts) = match v {
-                crate::memtable::Value::Data(v, ts) => (Some(v.clone()), ts),
-                crate::memtable::Value::Tombstone(ts) => (None, ts),
-            };
-            offset += MemTable::encode_key_value(
-                &k, 
-                v.as_deref(),
-                ts,
-                
-            ).len() as u64;
-        }
-        index
     }
 
     fn from_sstable_data(data: &SSTableData, interval: u64) -> Self {
@@ -279,6 +247,23 @@ impl SSTableData {
         self.chunks[index].size()
     }
 
+    pub fn push(&mut self, record: SSTableRecord) -> Result<(), String> {
+        if self.chunks.is_empty() {
+            self.chunks.push(SSTableRecords::new());
+        }
+        let last_chunk = self.chunks.last_mut().unwrap();
+        let ret = last_chunk.push(record.clone(), get_page_size());
+        match ret {
+            Err(err) if err == "page is full" => {
+                let mut new_chunk = SSTableRecords::new();
+                new_chunk.push(record, get_page_size()).unwrap();
+                self.chunks.push(new_chunk);
+                Ok(())
+            }
+            _ => ret
+        }
+    }
+
     pub fn get(&self, key: &Key, hint: Option<Offset>) -> Option<&Value> {
         if let Some(hint) = hint {
             if let Some(value) = self.chunks[hint as usize].get(key) {
@@ -339,6 +324,25 @@ impl fmt::Debug for SSTableData {
             writeln!(f, "{:?}", self.chunks[i])?;
         }
         Ok(())
+    }
+}
+
+impl From<MemTable> for SSTableData {
+    fn from(memtable: MemTable) -> Self {
+        let mut data = SSTableData::new();
+        for record in memtable.iter() {
+            let value = match record.1 {
+                super::memtable::Value::Data(value, timestamp) => (Some(value), timestamp),
+                super::memtable::Value::Tombstone(timestamp) => (None, timestamp),
+            };
+            let record = SSTableRecord::new(
+                record.0.clone(), 
+                value.0,
+                value.1,
+            );
+            data.push(record).unwrap();   
+        }
+        data
     }
 }
 
@@ -406,7 +410,6 @@ impl SSTableRecords {
     fn decode(data: &[u8], threadhold: usize) -> Result<(Self, usize), String> {
         let mut offset = 0;
         let mut records = Self::new();
-        // TODO: ファイルフォーマットの見直し
         while offset < data.len() {
             let (record, record_size) = SSTableRecord::decode(&data[offset..])
                 .map_err(|e| e.to_string())?;

@@ -3,7 +3,7 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, fs::File, thread::spawn};
+use std::{fmt::Debug, thread::spawn};
 
 use memtable::MemTable;
 use commitlog::CommitLog;

@@ -1,8 +1,8 @@
 use std::{fs::File, io::Write};
 
-use crate::{memtable::MemTable, utils::{self, get_page_size}};
+use crate::{memtable::MemTable, utils};
 
-use super::{SSTableData, SSTableHeader, SSTableIndex};
+use super::{SSTableData, SSTableIndex};
 
 
 #[derive(Debug)]
@@ -49,9 +49,9 @@ impl SSTableWriter {
 
 #[cfg(all(test, target_endian = "little"))]
 mod tests {
-    use std::fs::{self, remove_file, File};
+    use std::fs::{self, File};
 
-    use crate::{memtable::MemTable, sstable::{writer::SSTableWriter, SSTableData, SSTableHeader, SSTableIndex}, utils::get_page_size};
+    use crate::{memtable::MemTable, sstable::{writer::SSTableWriter, SSTableData, SSTableIndex}, utils::get_page_size};
 
     #[test]
     fn test_sst_writer_wirte_impl() {
@@ -93,9 +93,10 @@ mod tests {
         let page_size = get_page_size() as u64;
         let mut memtable = MemTable::new();
         memtable.put("key1", "value1", timestamp);
-        let path = "/tmp/test_sst_writer_write_index_impl.sst";
+        let path = "/tmp/test_sst_writer_write_index_impl.sst.idx";
         let mut file = File::create(path).unwrap();
-        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from_memtable(&memtable, page_size)).is_ok());
+        let data = SSTableData::try_from(memtable.encode()).unwrap();
+        assert!(SSTableWriter::write_index_impl(&mut file, &SSTableIndex::from_sstable_data(&data, page_size)).is_ok());
 
         let content = fs::read(path).unwrap();
         assert_eq!(

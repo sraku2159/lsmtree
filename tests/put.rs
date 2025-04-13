@@ -1,6 +1,6 @@
 use std::fs::{self, read_dir};
 
-use lsmtree::{sstable::compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, LSMTree, LSMTreeConf};
+use lsmtree::{sstable::compaction::Compaction, LSMTree, LSMTreeConf};
 
 pub struct MockCompaction {}
 
@@ -38,7 +38,6 @@ fn tear_down(sst_dir: &str, commitlog_dir: &str) {
 
 #[test]
 fn test_put_big_quantity() {
-    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let sst_dir = "./.test_put_big_quantity_sst";
     let commitlog_dir = "./.test_put_big_quantity_commitlog";
     let index_interval = lsmtree::utils::get_page_size();

@@ -1,4 +1,3 @@
-use core::time;
 use std::fs;
 
 use lsmtree::{sstable::compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, utils::get_page_size, LSMTree, LSMTreeConf};
@@ -66,7 +65,6 @@ fn test_get_with_size_tiered() {
 
 #[test]
 fn test_get_with_size_leveled() {
-    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let data = [("key1", "value1"), ("key2", "value2"), ("key3", "value3")];
     let sst_dir = "./.test_get_with_leveled_sst";
     let commitlog_dir = "./.test_get_with_leveled_commitlog";
@@ -91,7 +89,6 @@ fn test_get_with_size_leveled() {
 
 #[test]
 fn test_get_big_quantity() {
-    let timestamp = lsmtree::utils::get_timestamp() as u64; // 実際のタイムスタンプ
     let sst_dir = "./.test_get_big_quantity_sst";
     let commitlog_dir = "./.test_get_big_quantity_commitlog";
     let index_interval = get_page_size();

@@ -4,14 +4,6 @@ use crate::memtable;
 
 use super::*;
 
-const HEADER_SIZE: u64 = 16u64;
-
-// key size: u64
-// offset size: u64
-fn get_key_and_offset_len(num: usize) -> usize {
-    num * 16
-}
-
 #[test]
 fn test_sst_index_from_memtable() {
     let timestamp = 12345u64; // テスト用の固定タイムスタンプ
@@ -20,7 +12,8 @@ fn test_sst_index_from_memtable() {
     memtable.put("a", "1", timestamp);
     memtable.put("b", "2", timestamp);
     memtable.put("c", "3", timestamp);
-    let sst_index = SSTableIndex::from_memtable(&memtable, page_size);
+    let data = SSTableData::from(memtable);
+    let sst_index = SSTableIndex::from_sstable_data(&data, page_size);
     assert_eq!(sst_index.0.len(), 1);
     assert_eq!(sst_index.get(
         &"a".to_owned()).unwrap(), 
@@ -42,7 +35,8 @@ fn test_sst_index_from_memtable_page_size_data() {
         );
     }
 
-    let sst_index = SSTableIndex::from_memtable(&memtable, page_size);
+    let data = SSTableData::from(memtable);
+    let sst_index = SSTableIndex::from_sstable_data(&data, page_size);
     assert_eq!(sst_index.0.len(), 4);
     
     // 実際の値を取得して検証
@@ -92,7 +86,8 @@ fn test_sst_index_from_memtable_crossing_page_size() {
     memtable.put("2", "b".repeat(get_page_size() / 2).as_str(), timestamp);
     memtable.put("キー4", "d", timestamp);
 
-    let sst_index = SSTableIndex::from_memtable(&memtable, page_size);
+    let data = SSTableData::from(memtable);
+    let sst_index = SSTableIndex::from_sstable_data(&data, page_size);
 
     assert_eq!(sst_index.0.len(), 3);
     
@@ -183,7 +178,6 @@ fn test_sst_index_tryfrom_data_page_size_data() {
     let data = SSTableData::try_from(data).unwrap();
     let index = SSTableIndex::from_sstable_data(&data, page_size);
     assert_eq!(index.0.len(), 4);
-    let index_size = get_key_and_offset_len(4) + "0123".len();
 
     // 実際の値を取得して検証
     let actual_offset_0 = index.get(&"0".to_owned()).unwrap();
@@ -257,7 +251,6 @@ fn test_sst_index_tryfrom_data_crossing_page_size() {
     ].concat()).unwrap();
 
     let index = SSTableIndex::from_sstable_data(&data, page_size);
-    let index_size = get_key_and_offset_len(3) + "12キー4".len();
     assert_eq!(
         index.0.len(), 
         3

@@ -1,5 +1,4 @@
-use core::time;
-use std::{fs::{remove_file, File}, io::Write, time::SystemTime};
+use std::{fs::{remove_file, File}, io::Write};
 
 use crate::utils;
 
