@@ -20,8 +20,4 @@ impl Compaction for LeveledCompaction {
     fn get_target_dir(&self) -> String {
         unimplemented!();
     }
-
-    fn get_sstables(&self, dir: &String) -> Vec<SSTableReader> {
-        unimplemented!();
-    }
 }

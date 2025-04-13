@@ -12,18 +12,6 @@ impl Compaction for MockCompaction {
     fn get_target_dir(&self) -> String {
         unimplemented!("MockCompaction::get_target_dir is not implemented");
     }
-
-    fn get_sstables(&self, dir: &String) -> Vec<lsmtree::sstable::SSTableReader> {
-        let mut sstables = Vec::new();
-        let files = fs::read_dir(dir).unwrap();
-        for file in files {
-            let file = file.unwrap();
-            let path = file.path();
-            let sstable = lsmtree::sstable::SSTableReader::new(path.to_str().unwrap()).unwrap();
-            sstables.push(sstable);
-        }
-        sstables
-    }
 }
 
 struct MockTimeStampGenerator;
@@ -53,6 +41,7 @@ fn test_get_with_size_tiered() {
             Some(commitlog_dir.to_owned()),
             None,
             Some(index_interval),
+            Some("idx".to_owned()),
     )).unwrap();
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
@@ -77,6 +66,7 @@ fn test_get_with_size_leveled() {
             Some(commitlog_dir.to_owned()),
             None,
             Some(index_interval),
+            Some("idx".to_owned()),
     )).unwrap();
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.put(*key, *value).unwrap(), None);
@@ -108,6 +98,7 @@ fn test_get_big_quantity() {
             Some(commitlog_dir.to_owned()),
             None,
             Some(index_interval),
+            Some("idx".to_owned()),
     )).unwrap();
     /*
         * 大体1MBのデータを入れる

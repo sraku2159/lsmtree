@@ -29,6 +29,7 @@ where
     commitlog_dir: String,
     memtable_threshold: usize,
     index_interval: usize,
+    index_file_suffix: String,
 }
 
 impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
@@ -39,12 +40,14 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
         commitlog_dir: Option<String>,
         memtable_threshold: Option<usize>, 
         index_interval: Option<usize>,
+        index_file_suffix: Option<String>,
         ) -> LSMTreeConf<T, U>
     {
         let sst_dir = sst_dir.unwrap_or("./.sst".to_string());
         let commitlog_dir = commitlog_dir.unwrap_or("./.commitlog".to_string());
         let memtable_threshold = memtable_threshold.unwrap_or(get_page_size());
         let index_interval = index_interval.unwrap_or(get_page_size());
+        let index_file_suffix = index_file_suffix.unwrap_or("idx".to_string());
         LSMTreeConf {
             compaction,
             timestamp_generator,
@@ -52,6 +55,7 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTreeConf<T, U> {
             commitlog_dir,
             memtable_threshold,
             index_interval,
+            index_file_suffix,
         }
     }
 }
@@ -65,6 +69,7 @@ where
     memtable: MemTable,
     memtable_threshold: usize,
     index_interval: usize,
+    index_file_suffix: String,
     commitlog: CommitLog,
     sst_dir: String,
     compaction: T,
@@ -80,6 +85,7 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
             memtable: MemTable::new(),
             memtable_threshold: conf.memtable_threshold,
             index_interval: conf.index_interval,
+            index_file_suffix: conf.index_file_suffix,
             commitlog: CommitLog::new(&conf.commitlog_dir)?,
             sst_dir: conf.sst_dir,
             compaction: conf.compaction,
@@ -143,8 +149,14 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
 
     pub fn get(&self, key: &str) -> Result<Option<Value>, String> {
         match self.memtable.get(key) {
-            Some(value) => Ok(Some(value.to_string().clone())),
+            Some(value) => {
+                match value {
+                    memtable::Value::Data(value, _) => Ok(Some(value.to_string())),
+                    memtable::Value::Tombstone(_) => Ok(None),
+                }
+            },
             None => {
+                println!("Get from sstable");
                 for reader in self.reader_iter() {
                     // FileNotFoundの場合は、retry (ただ、コンパクションによる影響でない可能性もあるので、リトライの回数を制限する)
                     match reader.read(key) {
@@ -174,8 +186,11 @@ impl<T: Compaction, U: TimeStampGenerator> LSMTree<T, U> {
         self.memtable_threshold
     }
 
-    fn reader_iter(&self) -> SSTableReaderIter<T> {
-        SSTableReaderIter::new(&self.sst_dir, &self.compaction)
+    fn reader_iter(&self) -> SSTableReaderIter {
+        SSTableReaderIter::new(
+            &self.sst_dir, 
+            &self.index_file_suffix,
+        )
     }
 }
 
@@ -190,29 +205,49 @@ impl TimeStampGenerator for DefaultTimeStampGenerator {
     }
 }
 
-struct SSTableReaderIter<'a, 'b, T : Compaction> {
+struct SSTableReaderIter<'a, 'b> {
     root_dir: &'a String,
+    idx_file_suffix: &'b String,
     sstables: Vec<SSTableReader>,
     index: usize,
-    strategy: &'b T,
 }
 
-// バケットはディレクトリで数字
-// バケットの中のテーブルは作成日時でソート
-
-impl<'a, 'b, T: Compaction> SSTableReaderIter<'a, 'b, T> {
-    fn new(root_dir: &'a String, strategy: &'b T) -> SSTableReaderIter<'a, 'b, T> {
-        let sstables = strategy.get_sstables(root_dir);
+impl<'a, 'b> SSTableReaderIter<'a, 'b> {
+    fn new(root_dir: &'a String, idx_file_suffix: &'b String) -> SSTableReaderIter<'a, 'b> {
+        let sstables = Self::get_sstables(root_dir, idx_file_suffix);
         SSTableReaderIter {
-            root_dir,
             sstables,
             index: 0,
-            strategy,
+            root_dir,
+            idx_file_suffix,
         }
+    }
+
+    fn get_sstables(root_dir: &'a String, idx_file_suffix: &'b String) -> Vec<SSTableReader> {
+        let mut sstables = Vec::new();
+        let dir = std::fs::read_dir(root_dir).unwrap();
+        for entry in dir {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file() {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                if file_name.ends_with(".sst") {
+                    let idx_file_name = format!("{}.{}", file_name, idx_file_suffix);
+                    let idx_path = path.with_file_name(idx_file_name);
+                    if idx_path.exists() {
+                        let reader = SSTableReader::new(
+                            path.to_str().unwrap(), 
+                            idx_path.to_str().unwrap()).unwrap();
+                        sstables.push(reader);
+                    }
+                }
+            }
+        }
+        sstables
     }
 }
 
-impl<'a, 'b, T: Compaction> Iterator for SSTableReaderIter<'a, 'b, T> {
+impl<'a, 'b> Iterator for SSTableReaderIter<'a, 'b> {
     type Item = SSTableReader;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -221,7 +256,7 @@ impl<'a, 'b, T: Compaction> Iterator for SSTableReaderIter<'a, 'b, T> {
         }
         let mut reader = self.sstables[self.index].clone();
         if !reader.is_file_exists() {
-            self.sstables = self.strategy.get_sstables(self.root_dir);
+            self.sstables = Self::get_sstables(self.root_dir, self.idx_file_suffix);
             reader = self.sstables[self.index].clone();
         }
         self.index += 1;

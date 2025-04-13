@@ -1,4 +1,4 @@
-use std::fs::{self, read_dir};
+use std::{fs::{self, read_dir, DirEntry, ReadDir}, iter::Filter};
 
 use lsmtree::{sstable::compaction::Compaction, LSMTree, LSMTreeConf};
 
@@ -11,16 +11,6 @@ impl Compaction for MockCompaction {
 
     fn get_target_dir(&self) -> String {
         unimplemented!("MockCompaction::get_target_dir is not implemented");
-    }
-
-    fn get_sstables(&self, dir: &String) -> Vec<lsmtree::sstable::SSTableReader> {
-        let mut sstables = Vec::new();
-        let files = fs::read_dir(dir).unwrap();
-        for file in files { let file = file.unwrap(); let path = file.path();
-            let sstable = lsmtree::sstable::SSTableReader::new(path.to_str().unwrap()).unwrap();
-            sstables.push(sstable);
-        }
-        sstables
     }
 }
 
@@ -49,6 +39,7 @@ fn test_put_big_quantity() {
             Some(commitlog_dir.to_owned()),
             None,
             Some(index_interval),
+            Some("idx".to_owned()),
     )).unwrap();
     /*
         * 大体1MBのデータを入れる
@@ -61,9 +52,14 @@ fn test_put_big_quantity() {
         assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i)).unwrap(), None);
     }
     let read_dir = read_dir(sst_dir).unwrap();
-    read_dir.for_each(|entry| {
+
+    read_dir.filter(|entry: &Result<DirEntry, std::io::Error>| -> bool {
+        let entry = entry.as_ref().clone().unwrap();
+        entry.file_name().to_str().unwrap().ends_with(".sst")
+    }).for_each(|entry| {
         let entry = entry.unwrap();
         assert!(entry.metadata().unwrap().len() > lsm_tree.get_memtable_threshold() as u64);
     });
+
     tear_down(&sst_dir, &commitlog_dir);
 }

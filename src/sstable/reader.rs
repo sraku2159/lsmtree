@@ -7,22 +7,24 @@ type Offset = usize;
 #[derive(Debug, Clone)]
 pub struct SSTableReader {
     pub file: String,
-    header: SSTableHeader,
+    pub index_file: String,
     pub index: SSTableIndex,
     pub data: SSTableData,
 }
 
 impl SSTableReader {
-    pub fn new(file: &str) -> Result<SSTableReader, String> {
+    pub fn new(file: &str, index_file: &str) -> Result<SSTableReader, String> {
         let mut buf = vec![0u8; 16];
         // 1. fileの存在チェック
         if !std::path::Path::new(file).exists() {
             return Err(format!("{} not found", file));
         }
+        if !std::path::Path::new(index_file).exists() {
+            return Err(format!("{} not found", index_file));
+        }
         // 2. hederを読み込む
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
         let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-        let header = SSTableHeader::decode(&buf).map_err(|e| e.to_string())?;
 
         // 3. index, dataの初期化
         let index = SSTableIndex::new();
@@ -30,7 +32,7 @@ impl SSTableReader {
         Ok(
             SSTableReader {
                 file: file.to_string(),
-                header,
+                index_file: index_file.to_string(),
                 index,
                 data,
             }
@@ -42,13 +44,13 @@ impl SSTableReader {
     }
 
     pub fn read(&self, key: &str) -> Result<Value, String> {
-        Self::read_impl(&self.file,  &self.header, key)
+        Self::read_impl(&self.file, &self.index_file, key)
     }
 
-    fn read_impl(file: &str, header: &SSTableHeader, key: &str) -> Result<Value, String> {
-        let _ = header;
-        let (header, offset) = Self::read_header(file)?;
-        let index = Self::read_index(file, offset, header.data_size as usize)?;
+    fn read_impl(file: &str, index_file: &str, key: &str) -> Result<Value, String> {
+        // let (header, offset) = Self::read_header(file)?;
+        let idx_file_size = std::fs::metadata(index_file).map_err(|e| e.to_string())?.len() as usize;
+        let index = Self::read_index(index_file, 0, idx_file_size)?;
         if let Some((begin, end)) = index.find_key_range(&key.to_owned()) {
             let end = end.unwrap_or(
                 File::open(file).map_err(|e| e.to_string())?.metadata().map_err(|e| e.to_string())?.len() as u64
@@ -60,13 +62,13 @@ impl SSTableReader {
         Ok(None)
     }
 
-    pub fn read_header(file: &str) -> Result<(SSTableHeader, Offset), String> {
-        let mut buf = vec![0u8; 16];
-        let mut f = File::open(file).map_err(|e| e.to_string())?;
-        let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-        let header = SSTableHeader::decode(&buf).map_err(|e| e.to_string())?;
-        Ok((header, 16))
-    }
+    // pub fn read_header(file: &str) -> Result<(SSTableHeader, Offset), String> {
+    //     let mut buf = vec![0u8; 16];
+    //     let mut f = File::open(file).map_err(|e| e.to_string())?;
+    //     let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    //     let header = SSTableHeader::decode(&buf).map_err(|e| e.to_string())?;
+    //     Ok((header, 16))
+    // }
 
     pub fn read_index(file: &str, offset: Offset, size: usize) -> Result<SSTableIndex, String> {
         let mut buf = vec![0u8; size];
@@ -97,6 +99,7 @@ mod tests{
     #[test]
     fn test_sst_reader_new() {
         let path = "/tmp/test_sst_reader_new.sst";
+        let index_path = "/tmp/test_sst_reader_new.sst.idx";
         let header_size = 8u64;
         let index_size = 8u64;
         let data = vec![
@@ -109,41 +112,23 @@ mod tests{
             data
         ).unwrap();
 
-        let sst_reader = SSTableReader::new(path).unwrap();
+        fs::write(
+            index_path, 
+            "dummy_index_data"
+        ).unwrap();
+
+        let sst_reader = SSTableReader::new(path, index_path).unwrap();
         assert_eq!(sst_reader.file, path);
-        assert_eq!(sst_reader.header.header_size, header_size);
-        assert_eq!(sst_reader.header.data_size, index_size);
+        assert_eq!(sst_reader.index_file, index_path);
     
         fs::remove_file(path).unwrap();
+        fs::remove_file(index_path).unwrap();
     }
-
-    #[test]
-    fn test_sst_reader_new_with_some_data() {
-        let path = "/tmp/test_sst_reader_new_with_some_data.sst";
-        let header_size = 8u64;
-        let index_size = 8u64;
-        let data = vec![
-            header_size.to_ne_bytes().to_vec(),
-            index_size.to_ne_bytes().to_vec(),
-            (0..256).map(|i: i32| i.to_ne_bytes().to_vec()).flatten().collect::<Vec<u8>>(),
-        ].concat();
-    
-        fs::write(
-            path, 
-            data
-        ).unwrap();
-    
-        let sst_reader = SSTableReader::new(path).unwrap();
-        assert_eq!(sst_reader.file, path);
-        assert_eq!(sst_reader.header.header_size, header_size);
-        assert_eq!(sst_reader.header.data_size, index_size);
-
-        fs::remove_file(path).unwrap();
-    }    
 
     #[test]
     fn test_sst_reader_simple_read() {
         let path = "/tmp/test_sst_reader_simple_read.sst";
+        let idx_path = path.to_string() + ".idx";
         let kvs = vec![
             ("key1", "value1"),
             ("key2", "value2"),
@@ -165,25 +150,24 @@ mod tests{
                 ].concat()
             }).flatten().collect::<Vec<u8>>(),
         ].concat();
+
         let index = vec![
             "key1".len().to_ne_bytes().to_vec(),
             "key1".as_bytes().to_vec(),
-            (
-                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
-            ).to_ne_bytes().to_vec(),
+            0u64.to_ne_bytes().to_vec(),
         ].concat();
 
         fs::write(
-            path, 
-            vec![
-                16u64.to_ne_bytes().to_vec(),
-                index.len().to_ne_bytes().to_vec(),
-                index,
-                data,
-            ].concat()
+            path,
+            data 
         ).unwrap();
     
-        let sst_reader = SSTableReader::new(path).unwrap();
+        fs::write(
+            &idx_path, 
+            index
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path, &idx_path).unwrap();
         for (k, v) in kvs {
             let value = sst_reader.read(k).unwrap();
             assert_eq!(value, Some(v.to_string()));
@@ -194,6 +178,7 @@ mod tests{
     #[test]
     fn test_sst_reader_read_deleted() {
         let path = "/tmp/test_sst_reader_read_deleted.sst";
+        let idx_path = path.to_string() + ".idx";
         let kvs = vec![
             ("key1", Some("value1".to_string())),
             ("key2", None), // 削除されたキー
@@ -220,23 +205,21 @@ mod tests{
         let index = vec![
             "key1".len().to_ne_bytes().to_vec(),
             "key1".as_bytes().to_vec(),
-            (
-                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
-            ).to_ne_bytes().to_vec(),
+            0u64.to_ne_bytes().to_vec(),
         ].concat();
 
         // ファイルの作成
         fs::write(
             path, 
-            vec![
-                16u64.to_ne_bytes().to_vec(),
-                index.len().to_ne_bytes().to_vec(),
-                index,
-                data,
-            ].concat()
+            data
         ).unwrap();
     
-        let sst_reader = SSTableReader::new(path).unwrap();
+        fs::write(
+            &idx_path, 
+            index
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path, &idx_path).unwrap();
         
         // 削除されたキーの読み取りテスト
         let value = sst_reader.read("key2").unwrap();
@@ -252,6 +235,7 @@ mod tests{
     #[test]
     fn test_sst_reader_read_not_exists() {
         let path = "/tmp/test_sst_reader_read_not_exists.sst";
+        let idx_path = path.to_string() + ".idx";
         let kvs = vec![
             ("key1", "value1"),
             ("key3", "value3"),
@@ -277,23 +261,21 @@ mod tests{
         let index = vec![
             "key1".len().to_ne_bytes().to_vec(),
             "key1".as_bytes().to_vec(),
-            (
-                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
-            ).to_ne_bytes().to_vec(),
+            0u64.to_ne_bytes().to_vec(),
         ].concat();
 
         // ファイルの作成
         fs::write(
             path, 
-            vec![
-                16u64.to_ne_bytes().to_vec(),
-                index.len().to_ne_bytes().to_vec(),
-                index,
-                data,
-            ].concat()
+            data
         ).unwrap();
-    
-        let sst_reader = SSTableReader::new(path).unwrap();
+
+        fs::write(
+            &idx_path, 
+            index
+        ).unwrap();
+
+        let sst_reader = SSTableReader::new(path, &idx_path).unwrap();
         
         // 存在しないキーの読み取りテスト
         let value = sst_reader.read("key2").unwrap();
@@ -309,7 +291,8 @@ mod tests{
     #[test]
     fn test_sst_reader_read_big_data() {
         let path = "/tmp/test_sst_reader_read_big_data.sst";
-        
+        let idx_path = path.to_string() + ".idx";
+
         // 大きなデータの作成（10KBの文字列）
         let big_value = "a".repeat(10 * 1024);
         let kvs = vec![
@@ -338,23 +321,21 @@ mod tests{
         let index = vec![
             "key1".len().to_ne_bytes().to_vec(),
             "key1".as_bytes().to_vec(),
-            (
-                SSTableHeader::SIZE + 8u64 + "key1".len() as u64 + 8u64
-            ).to_ne_bytes().to_vec(),
+            0u64.to_ne_bytes().to_vec(),
         ].concat();
 
         // ファイルの作成
         fs::write(
             path, 
-            vec![
-                16u64.to_ne_bytes().to_vec(),
-                index.len().to_ne_bytes().to_vec(),
-                index,
-                data,
-            ].concat()
+            data
         ).unwrap();
     
-        let sst_reader = SSTableReader::new(path).unwrap();
+        fs::write(
+            &idx_path, 
+            index
+        ).unwrap();
+    
+        let sst_reader = SSTableReader::new(path, &idx_path).unwrap();
         
         // 大きなデータの読み取りテスト
         let value = sst_reader.read("key2").unwrap();

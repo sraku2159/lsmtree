@@ -54,8 +54,4 @@ impl Compaction for SizeTieredCompaction {
         unimplemented!();
         // self.dir + "/staged"
     }
-
-    fn get_sstables(&self, dir: &String) -> Vec<SSTableReader> {
-        unimplemented!();
-    }
 }
