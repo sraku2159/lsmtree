@@ -1,3 +1,5 @@
+use crate::sstable::SSTableData;
+
 use super::SSTableReader;
 use super::Compaction;
 
@@ -43,6 +45,53 @@ impl SizeTieredCompaction {
         }
     }
 
+    fn merge(&self, left: &SSTableData, right: &SSTableData) -> SSTableData {
+        self.merge_impl(left, right)
+    }
+
+    // TODO: エラー処理
+    fn merge_impl(&self, left: &SSTableData, right: &SSTableData) -> SSTableData {
+        let mut merged = SSTableData::new();
+        let mut left_iter = left.iter();
+        let mut right_iter = right.iter();
+
+        let mut left = left_iter.next();
+        let mut right = right_iter.next();
+        while left.is_some() && right.is_some() {
+            let left_v = left.unwrap();
+            let right_v = right.unwrap();
+            if left_v.key() < right_v.key() {
+                let _ = merged.push(left_v.clone());
+                left = left_iter.next();
+            } else if left_v.key() > right_v.key() {
+                let _ = merged.push(right_v.clone());
+                right = right_iter.next();
+            } else {
+                // keyが重複している場合、timestampが大きい方を選ぶ
+                if left_v.timestamp() > right_v.timestamp() {
+                    let _ = merged.push(left_v.clone());
+                } else {
+                    let _ = merged.push(right_v.clone());
+                }
+                left = left_iter.next();
+                right = right_iter.next();
+            }
+        }
+
+        while left.is_some() {
+            let left_v = left.unwrap();
+            let _ = merged.push(left_v.clone());
+            left = left_iter.next();
+        }
+
+        while right.is_some() {
+            let right_v = right.unwrap();
+            let _ = merged.push(right_v.clone());
+            right = right_iter.next();
+        }
+        merged
+    }
+
 }
 
 impl Compaction for SizeTieredCompaction {
@@ -55,3 +104,6 @@ impl Compaction for SizeTieredCompaction {
         // self.dir + "/staged"
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -192,7 +192,7 @@ impl FromIterator<(Key, Offset)> for SSTableIndex {
 // SSTableDataはSSTableのデータのキャッシュ的な立ち位置として振る舞う
 /// SSTable自体はイミュータブルなので、これに対する更新は起きない
 /// TODO: キャッシュとしての振る舞いを実装する
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SSTableData{
     chunks: Vec<SSTableRecords>,
 }
@@ -391,7 +391,7 @@ impl<'a> Iterator for SSTableDataIterator<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SSTableRecords(Vec<SSTableRecord>);
 
 impl SSTableRecords {
