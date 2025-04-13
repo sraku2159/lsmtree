@@ -1,4 +1,7 @@
+use std::fs;
+
 use crate::sstable::SSTableData;
+use crate::sstable::SSTableWriter;
 
 use super::SSTableReader;
 use super::Compaction;
@@ -36,17 +39,34 @@ nextで次のReaderを返すが、実際に読み込む前にコンパクショ�
 
 #[derive(Debug)]
 pub struct SizeTieredCompaction {
-    // dir: String,
+    index_interval: usize,
+    min_threshold: f64,
+    max_threshold: f64,
 }
 
 impl SizeTieredCompaction {
-    pub fn new() -> SizeTieredCompaction {
+    pub fn new(index_interval: usize, min_threshold: Option<f64>, max_threshold: Option<f64>) -> SizeTieredCompaction {
         SizeTieredCompaction {
+            index_interval,
+            min_threshold: min_threshold.unwrap_or(0.5),
+            max_threshold: max_threshold.unwrap_or(1.5),
         }
     }
 
-    fn merge(&self, left: &SSTableData, right: &SSTableData) -> SSTableData {
-        self.merge_impl(left, right)
+    fn merge(&self, sstables: Vec<SSTableData>) -> SSTableData {
+        let mut target = sstables;
+        let mut merged = Vec::new();
+        while merged.len() != 1 {
+            target.windows(2).for_each(|pair| {
+                let left = pair[0].clone();
+                let right = pair[1].clone();
+                let merged_data = self.merge_impl(&left, &right);
+                merged.push(merged_data);
+            });
+            target = merged;
+            merged = Vec::new();
+        }
+        merged.pop().unwrap()
     }
 
     // TODO: エラー処理
@@ -92,16 +112,65 @@ impl SizeTieredCompaction {
         merged
     }
 
+    fn get_interesting_bucket(&self, sstables: &Vec<SSTableReader>) -> Vec<SSTableReader> {
+        let mut buckets = Vec::new();
+
+        for sstable in sstables.iter() {
+            let metadata = sstable.metadata().unwrap();
+            let len = metadata.len() as f64;
+            
+            fn bucket_median_size(sstables: &Vec<SSTableReader>) -> f64 {
+                let sum = sstables.iter().map(|sstable| {
+                    sstable.metadata().unwrap().len() as f64
+                }).sum::<f64>();
+                let len = sstables.len() as f64;
+                if len == 0.0 {
+                    return 0.0;
+                }
+                sum / len
+            }
+
+            let bucket = buckets.iter_mut().find(|bucket| {
+                let bucket_median = bucket_median_size(&bucket);
+                bucket_median * self.min_threshold < len && len < bucket_median * self.max_threshold
+            });
+            match bucket {
+                Some(bucket) => {
+                    bucket.push(sstable.clone());
+                }
+                None => {
+                    buckets.push(vec![sstable.clone()]);
+                }
+                
+            }
+        }
+
+        buckets.into_iter().max_by(|a, b| {
+            a.len().cmp(&b.len())
+        }).unwrap_or_else(Vec::new)
+    }
+
 }
 
 impl Compaction for SizeTieredCompaction {
-    fn compact(&self, sstable: Vec<SSTableReader>) {
-        unimplemented!();
-    }
+    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+        let mut sstables = sstables;
+        sstables.sort_by(|a, b| {
+            a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
+        });
+        
+        let interestings = self.get_interesting_bucket(&sstables)
+            .iter()
+            .map(|sstable| sstable.data().unwrap())
+            .collect::<Vec<SSTableData>>();
 
-    fn get_target_dir(&self) -> String {
-        unimplemented!();
-        // self.dir + "/staged"
+        let compacted = self.merge(interestings);
+        writer.write_with_index(&compacted, self.index_interval)?;
+        sstables.iter().for_each(|sstable| {
+            fs::remove_file(&sstable.file).map_err(|e| e.to_string()).unwrap();
+            fs::remove_file(&sstable.index_file).map_err(|e| e.to_string()).unwrap();
+        });
+        Ok(())
     }
 }
 

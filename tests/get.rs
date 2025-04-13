@@ -1,16 +1,14 @@
 use std::fs;
 
-use lsmtree::{sstable::compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, utils::get_page_size, LSMTree, LSMTreeConf};
+use lsmtree::{sstable::{compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, SSTableReader, SSTableWriter}, utils::get_page_size, LSMTree, LSMTreeConf};
 
 pub struct MockCompaction {}
 
 impl Compaction for MockCompaction {
-    fn compact(&self, _sstables: Vec<lsmtree::sstable::SSTableReader>) {
+    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+        let _ = writer;
+        let _ = sstables;
         unimplemented!("MockCompaction::compact is not implemented");
-    }
-
-    fn get_target_dir(&self) -> String {
-        unimplemented!("MockCompaction::get_target_dir is not implemented");
     }
 }
 
@@ -35,7 +33,11 @@ fn test_get_with_size_tiered() {
     let index_interval = get_page_size();
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
-            SizeTieredCompaction::new(),
+            SizeTieredCompaction::new(
+                get_page_size(),
+                Some(0.5),
+                Some(1.5),
+            ),
             MockTimeStampGenerator {},
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),

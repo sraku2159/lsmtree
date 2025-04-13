@@ -35,6 +35,24 @@ impl SSTableWriter {
         Self::write_index_impl(&mut index_file, &index)
     }
 
+    pub fn write_with_index(&self, data: &SSTableData, index_interval: usize) -> Result<(), String> {
+        let mut file = File::create(&self.file).map_err(|e| e.to_string())?;
+        let mut index_file = File::create(&self.index_file).map_err(|e| e.to_string())?;
+        let index = SSTableIndex::from_sstable_data(data, index_interval as u64);
+        Self::write_data_impl(&mut file, data)?;
+        Self::write_index_impl(&mut index_file, &index)
+    }
+
+    pub fn write_data(&self, data: &SSTableData) -> Result<(), String> {
+        let mut file = File::create(&self.file).map_err(|e| e.to_string())?;
+        Self::write_data_impl(&mut file, data)
+    }
+
+    pub fn write_index(&self, index: &SSTableIndex) -> Result<(), String> {
+        let mut file = File::create(&self.index_file).map_err(|e| e.to_string())?;
+        Self::write_index_impl(&mut file, index)
+    }
+
     fn write_index_impl(file: &mut File, index: &SSTableIndex) -> Result<(), String> {
         let mut index = index.encode();
         file.write_all(&mut index).map_err(|e| e.to_string())

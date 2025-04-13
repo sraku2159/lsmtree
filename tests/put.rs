@@ -1,16 +1,14 @@
-use std::{fs::{self, read_dir, DirEntry, ReadDir}, iter::Filter};
+use std::fs::{read_dir, DirEntry};
 
-use lsmtree::{sstable::compaction::Compaction, LSMTree, LSMTreeConf};
+use lsmtree::{sstable::{compaction::Compaction, SSTableReader, SSTableWriter}, LSMTree, LSMTreeConf};
 
 pub struct MockCompaction {}
 
 impl Compaction for MockCompaction {
-    fn compact(&self, _sstables: Vec<lsmtree::sstable::SSTableReader>) {
+    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+        let _ = sstables;
+        let _ = writer;
         unimplemented!("MockCompaction::compact is not implemented");
-    }
-
-    fn get_target_dir(&self) -> String {
-        unimplemented!("MockCompaction::get_target_dir is not implemented");
     }
 }
 

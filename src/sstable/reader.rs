@@ -1,10 +1,10 @@
-use std::{fs::File, io::{Read, Seek}};
+use std::{fs::{File, Metadata}, io::{Read, Seek}};
 
 use super::{SSTableData, SSTableHeader, SSTableIndex, Value};
 
 type Offset = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SSTableReader {
     pub file: String,
     pub index_file: String,
@@ -14,7 +14,6 @@ pub struct SSTableReader {
 
 impl SSTableReader {
     pub fn new(file: &str, index_file: &str) -> Result<SSTableReader, String> {
-        let mut buf = vec![0u8; 16];
         // 1. fileの存在チェック
         if !std::path::Path::new(file).exists() {
             return Err(format!("{} not found", file));
@@ -22,9 +21,6 @@ impl SSTableReader {
         if !std::path::Path::new(index_file).exists() {
             return Err(format!("{} not found", index_file));
         }
-        // 2. hederを読み込む
-        let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
-        let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
 
         // 3. index, dataの初期化
         let index = SSTableIndex::new();
@@ -37,6 +33,18 @@ impl SSTableReader {
                 data,
             }
         )
+    }
+
+    pub fn metadata(&self) -> Result<Metadata, String> {
+        std::fs::metadata(&self.file).map_err(|e| e.to_string())
+    }
+
+    pub fn data(&self) -> Result<SSTableData, String> {
+        let mut buf = vec![0u8; 16];
+        let mut f = File::open(&self.file).map_err(|e| e.to_string())?;
+        let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        let data = SSTableData::decode(&buf).map_err(|e| e.to_string())?;
+        Ok(data)
     }
 
     pub fn is_file_exists(&self) -> bool {

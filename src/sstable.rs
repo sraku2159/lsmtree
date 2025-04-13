@@ -51,7 +51,7 @@ impl SSTableHeader {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SSTableIndex(BTreeMap<Key, Offset>);
 
 impl SSTableIndex {

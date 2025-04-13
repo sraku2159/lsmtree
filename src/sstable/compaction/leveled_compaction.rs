@@ -1,3 +1,5 @@
+use crate::sstable::SSTableWriter;
+
 use super::SSTableReader;
 use super::Compaction;
 
@@ -13,11 +15,7 @@ impl LeveledCompaction {
 }
 
 impl Compaction for LeveledCompaction {
-    fn compact(&self, sstable: Vec<SSTableReader>) {
-        unimplemented!();
-    }
-
-    fn get_target_dir(&self) -> String {
+    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
         unimplemented!();
     }
 }
