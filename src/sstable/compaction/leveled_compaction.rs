@@ -16,6 +16,8 @@ impl LeveledCompaction {
 
 impl Compaction for LeveledCompaction {
     fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+        let _ = writer;
+        let _ = sstables;
         unimplemented!();
     }
 }
