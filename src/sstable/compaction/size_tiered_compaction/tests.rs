@@ -1,6 +1,8 @@
-use std::fs;
+use std::{collections::BTreeMap, fs, path, vec};
 
-use crate::{memtable::MemTable, sstable::{SSTableData, SSTableReader}, utils::get_page_size};
+use libc::sleep;
+
+use crate::{memtable::MemTable, sstable::{compaction::Compaction, SSTableData, SSTableReader, SSTableWriter}, utils::get_page_size};
 
 use super::SizeTieredCompaction;
 
@@ -327,19 +329,131 @@ fn test_get_interesting_bucket_with_max() {
     });
 }
 
-// #[test]
-// fn test_compact_simple() {
-//     let data = vec![
-//         ("key1", "value1", 1),
-//         ("key2", "value2", 2),
-//         ("key3", "value3", 3),
-//     ];
-//     let sstable_data = create_sstable_data(data);
-//     let size_tiered_compaction = super::SizeTieredCompaction::new(
-//         get_page_size(),
-//         Some(0.5),
-//         Some(1.5),
-//     );
-//     let compacted = size_tiered_compaction.compact(&sstable_data);
-//     assert_eq!(compacted, sstable_data);
-// }
+#[test]
+fn test_window_usage() {
+    let vec = vec![1, 2, 3, 4, 5];
+    for v in vec.windows(2) {
+        println!("{:?}", v);
+    }
+}
+
+#[test]
+fn test_chunk_usage() {
+    let vec = vec![1, 2, 3, 4, 5];
+    for v in vec.chunks(2) {
+        println!("{:?}", v);
+    }
+}
+
+#[test]
+fn test_compact_simple() {
+    let path = "compact_test_simple";
+    let data = vec![
+        ("key1", "value1", 1),
+        ("key2", "value2", 2),
+        ("key3", "value3", 3),
+        ("key4", "value4", 4),
+        ("key3", "value5", 5),
+        ("key5", "value6", 6),
+        ("key6", "value7", 7),
+        ("key3", "value8", 8),
+        ("key7", "value9", 9),
+        ("key8", "value10", 10),
+        ("key9", "value11", 11),
+        ("key3", "value12", 12),
+        ("key10", "value13", 13),
+    ];
+    if path::Path::new(path).exists() {
+        fs::remove_dir_all(path).unwrap();
+    }
+    fs::create_dir(&path).unwrap();
+
+    let writer = SSTableWriter::new(&path).unwrap(); 
+    let sstable_data = create_sstable_data(data[0..3].to_vec());
+    writer.write_with_index(&sstable_data, 34).unwrap();
+
+    unsafe { sleep(1); }
+
+    let writer = SSTableWriter::new(&path).unwrap(); 
+    let sstable_data2 = create_sstable_data(data[3..6].to_vec());
+    writer.write_with_index(&sstable_data2, 34).unwrap();
+
+    unsafe { sleep(1); }
+
+    let writer = SSTableWriter::new(&path).unwrap(); 
+    let sstable_data3 = create_sstable_data(data[6..9].to_vec());
+    writer.write_with_index(&sstable_data3, 34).unwrap();
+
+    unsafe { sleep(1); }
+
+    let writer = SSTableWriter::new(&path).unwrap(); 
+    let sstable_data4 = create_sstable_data(data[9..12].to_vec());
+    writer.write_with_index(&sstable_data4, 34).unwrap();
+
+    unsafe { sleep(1); }
+
+    let writer = SSTableWriter::new(&path).unwrap(); 
+    let sstable_data5 = create_sstable_data(data[12..].to_vec());
+    writer.write_with_index(&sstable_data5, 34).unwrap();
+
+    let tables = fs::read_dir(&path).unwrap();
+    let mut target = vec![];
+
+    for table in tables {
+        let table = table.unwrap();
+        let path = table.path();
+        if path.is_file() && path.extension().unwrap() == "sst" {
+            target.push(
+                SSTableReader::new(
+                    path.to_str().unwrap(),
+                    &(path.to_str().unwrap().to_string() + ".idx")
+                ).unwrap()
+            )
+        }
+    }
+
+    let size_tiered_compaction = super::SizeTieredCompaction::new(
+        get_page_size(),
+        Some(0.5),
+        Some(1.5),
+        Some(4)
+    );
+
+    let writer = SSTableWriter::new(&path).unwrap();
+    assert!(size_tiered_compaction.compact(target, writer).is_ok());
+
+    let tables = fs::read_dir(&path).unwrap().filter(|v| {
+        v.as_ref().unwrap().path().extension().unwrap() == "sst"
+    })
+    .map(|v| v.unwrap())
+    .collect::<Vec<_>>();
+
+    let compacted = tables.iter().max_by(|a, b| {
+        a.path().cmp(&b.path())
+    }).unwrap();
+
+    let mut unique = BTreeMap::new();
+    for (k, v, ts) in data[0..12].iter() {
+        if let Some((prev_v, prev_ts)) = unique.get_mut(*k) {
+            if *ts > *prev_ts {
+                *prev_v = *v;
+                *prev_ts = *ts;
+            }
+        } else {
+            unique.insert(*k, (*v, *ts));
+        }
+    }
+    assert_eq!(
+        compacted.metadata().unwrap().len(),
+        unique.iter().fold(0, 
+            |acc, (k, (v, _))| acc + k.len() + v.len() + 8 * 3
+        ) as u64 
+    );
+
+    let tables = fs::read_dir(&path).unwrap();
+    assert_eq!(
+        tables.filter(|v| v.as_ref().unwrap().path().extension().unwrap() == "sst").count(), 
+        2
+    );
+    fs::remove_dir_all(&path).unwrap();
+}

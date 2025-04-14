@@ -40,9 +40,9 @@ impl SSTableReader {
     }
 
     pub fn data(&self) -> Result<SSTableData, String> {
-        let mut buf = vec![0u8; 16];
         let mut f = File::open(&self.file).map_err(|e| e.to_string())?;
-        let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        let mut buf = vec![];
+        f.read_to_end(buf.as_mut()).map_err(|e| e.to_string())?;
         let data = SSTableData::decode(&buf).map_err(|e| e.to_string())?;
         Ok(data)
     }

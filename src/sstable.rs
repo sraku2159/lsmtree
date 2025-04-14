@@ -179,19 +179,6 @@ impl FromIterator<(Key, Offset)> for SSTableIndex {
     }
 }
 
-// 一つのSSTableにおけるデータを表す
-// データの重複はありえない
-/// memtableから作成される (memtable内でデータの重複は起こり得ない)
-// ページサイズでデータを分割するが、原則ページサイズを超えないようにしたい
-/// 例外として、Valueが大きい場合はページサイズを超えることもある
-/// ページサイズ程度のデータを格納することを目指す
-/// 
-/// N.B.
-//// 同じファイル内にインデックスやヘッダーが存在する場合、それらのサイズを考慮しないと正しいチャンクにならないが、今回は考慮しない
-/// 
-// SSTableDataはSSTableのデータのキャッシュ的な立ち位置として振る舞う
-/// SSTable自体はイミュータブルなので、これに対する更新は起きない
-/// TODO: キャッシュとしての振る舞いを実装する
 #[derive(Clone, PartialEq, Eq)]
 pub struct SSTableData{
     chunks: Vec<SSTableRecords>,

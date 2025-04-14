@@ -1,5 +1,6 @@
 use std::fs;
 
+use libc::sleep;
 use lsmtree::{sstable::{compaction::{leveled_compaction::LeveledCompaction, size_tiered_compaction::SizeTieredCompaction, Compaction}, SSTableReader, SSTableWriter}, utils::get_page_size, LSMTree, LSMTreeConf};
 
 #[derive(Debug, Clone)]
@@ -13,11 +14,20 @@ impl Compaction for MockCompaction {
     }
 }
 
-struct MockTimeStampGenerator;
+struct MockTimeStampGenerator {
+    monotonic: u64,
+}
+
+impl MockTimeStampGenerator {
+    pub fn new() -> Self {
+        MockTimeStampGenerator { monotonic: 0 }
+    }
+}
 
 impl lsmtree::TimeStampGenerator for MockTimeStampGenerator {
-    fn get_timestamp(&self) -> u64 {
-        123_456_789_012
+    fn get_timestamp(&mut self) -> u64 {
+        self.monotonic += 1;
+        self.monotonic
     }
 }
 
@@ -40,7 +50,7 @@ fn test_get_with_size_tiered() {
                 Some(1.5),
                 Some(4),
             ),
-            MockTimeStampGenerator {},
+            MockTimeStampGenerator::new(),
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
@@ -67,7 +77,7 @@ fn test_get_with_size_leveled() {
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             LeveledCompaction::new(),
-            MockTimeStampGenerator {},
+            MockTimeStampGenerator::new(),
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
@@ -101,7 +111,7 @@ fn test_get_big_quantity() {
     let mut lsm_tree = LSMTree::new(
         LSMTreeConf::new(
             MockCompaction {},
-            MockTimeStampGenerator {},
+            MockTimeStampGenerator::new(),
             Some(sst_dir.to_owned()),
             Some(commitlog_dir.to_owned()),
             None,
@@ -125,6 +135,66 @@ fn test_get_big_quantity() {
     assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
     for i in 0..104857 {
         assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i))));
+    }
+    println!("Elapsed time: {:?}", now.elapsed());
+    tear_down(sst_dir, commitlog_dir);
+}
+
+#[test]
+fn test_get_big_quantity_with_ssts() {
+    let sst_dir = "./.test_get_big_quantity_sst_with_ssts";
+    let commitlog_dir = "./.test_get_big_quantity_with_ssts_commitlog";
+    let index_interval = get_page_size();
+
+    if fs::exists(sst_dir).unwrap() {
+        fs::remove_dir_all(sst_dir).unwrap();
+    }
+    if fs::exists(commitlog_dir).unwrap() {
+        fs::remove_dir_all(commitlog_dir).unwrap();
+    }
+
+    let mut lsm_tree = LSMTree::new(
+        LSMTreeConf::new(
+            SizeTieredCompaction::new(
+                get_page_size(),
+                Some(0.5),
+                Some(1.5),
+                Some(4),
+            ),
+            MockTimeStampGenerator::new(),
+            Some(sst_dir.to_owned()),
+            Some(commitlog_dir.to_owned()),
+            None,
+            Some(index_interval),
+            Some("idx".to_owned()),
+            Some(5),
+            Some(true),
+    )).unwrap();
+    /*
+        * 大体1MBのデータを入れる
+        * 1MB = 1024KB = 1024 * 1024B = 1048576B
+        * 1key ≒ 4B, 1value ≒ 6B
+        * 1entry ≒ 10B
+        * 1048576B / 10B ≒ 104857
+     */
+    // 3391.58s
+    let cnt = 104856 / 3;
+    for i in 0..cnt {
+        assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i)).unwrap(), None);
+    }
+    for i in 0..cnt {
+        assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i + cnt)).unwrap(), None);
+    }
+    for i in 0..cnt {
+        assert_eq!(lsm_tree.put(&format!("key{}", i), &format!("value{}", i + cnt * 2)).unwrap(), None);
+    }
+
+    unsafe { sleep(100) };
+
+    let now = std::time::Instant::now();
+    assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
+    for i in 0..104857 {
+        assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i + cnt * 2))));
     }
     println!("Elapsed time: {:?}", now.elapsed());
     tear_down(sst_dir, commitlog_dir);

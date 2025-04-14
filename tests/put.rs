@@ -15,7 +15,7 @@ impl Compaction for MockCompaction {
 
 struct MockTimeStampGenerator;
 impl lsmtree::TimeStampGenerator for MockTimeStampGenerator {
-    fn get_timestamp(&self) -> u64 {
+    fn get_timestamp(&mut self) -> u64 {
         123_456_789_012
     }
 }

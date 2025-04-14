@@ -125,9 +125,11 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
             loop {
                 // 指定された間隔でスリープ
                 sleep(Duration::from_secs(interval_seconds));
+                println!("Periodic compaction started");
                 
                 // コンパクションを実行
                 let sstables = Self::get_sstables_for_compaction(&sst_dir, &index_file_suffix);
+                println!("sstables: {:?}", sstables);
                 if sstables.len() > 1 {
                     match SSTableWriter::new(&sst_dir) {
                         Ok(writer) => {
@@ -335,12 +337,12 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
 }
 
 pub trait TimeStampGenerator {
-    fn get_timestamp(&self) -> u64;
+    fn get_timestamp(&mut self) -> u64;
 }
 
 pub struct DefaultTimeStampGenerator {}
 impl TimeStampGenerator for DefaultTimeStampGenerator {
-    fn get_timestamp(&self) -> u64 {
+    fn get_timestamp(&mut self) -> u64 {
         utils::get_timestamp()
     }
 }

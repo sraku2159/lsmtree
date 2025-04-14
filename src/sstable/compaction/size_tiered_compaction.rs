@@ -26,16 +26,14 @@ impl SizeTieredCompaction {
 
     fn merge(&self, sstables: Vec<SSTableData>) -> SSTableData {
         let mut target = sstables;
-        let mut merged = Vec::new();
         while target.len() != 1 {
-            target.windows(2).for_each(|pair| {
-                let left = pair[0].clone();
-                let right = pair[1].clone();
-                let merged_data = self.merge_impl(&left, &right);
-                merged.push(merged_data);
-            });
-            target = merged;
-            merged = Vec::new();
+            target = target.chunks(2).map(|pair| {
+                if pair.len() == 1 {
+                    return pair[0].clone();
+                }
+                let ret = self.merge_impl(&pair[0], &pair[1]);
+                ret
+            }).collect::<Vec<SSTableData>>();
         }
         target.pop().unwrap()
     }
@@ -129,8 +127,9 @@ impl Compaction for SizeTieredCompaction {
         sstables.sort_by(|a, b| {
             a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
         });
-        
-        let interestings = self.get_interesting_bucket(&sstables)
+
+        let interestings = self.get_interesting_bucket(&sstables);
+        let interestings_data = interestings
             .iter()
             .map(|sstable| sstable.data().unwrap())
             .collect::<Vec<SSTableData>>();
@@ -139,9 +138,9 @@ impl Compaction for SizeTieredCompaction {
             return Ok(());
         }
 
-        let compacted = self.merge(interestings);
+        let compacted = self.merge(interestings_data);
         writer.write_with_index(&compacted, self.index_interval)?;
-        sstables.iter().for_each(|sstable| {
+        interestings.iter().for_each(|sstable| {
             fs::remove_file(&sstable.file).map_err(|e| e.to_string()).unwrap();
             fs::remove_file(&sstable.index_file).map_err(|e| e.to_string()).unwrap();
         });
