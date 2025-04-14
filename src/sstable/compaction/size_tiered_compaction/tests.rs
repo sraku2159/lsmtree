@@ -347,7 +347,7 @@ fn test_chunk_usage() {
 
 #[test]
 fn test_compact_simple() {
-    let path = "compact_test_simple";
+    let path = ".test_compact_test_simple";
     let data = vec![
         ("key1", "value1", 1),
         ("key2", "value2", 2),

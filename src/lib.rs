@@ -3,7 +3,7 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, thread::{spawn, sleep}, time::Duration};
+use std::{fmt::Debug, sync::{Arc, Mutex}, thread::{sleep, spawn}, time::Duration};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
@@ -21,7 +21,7 @@ pub type Value = String;
 pub struct LSMTreeConf<T, U = DefaultTimeStampGenerator>
 where
     T: Compaction + Clone + Send + Sync + 'static,
-    U: TimeStampGenerator,
+    U: TimeStampGenerator + Send + Sync + 'static,
 {
     compaction: T,
     timestamp_generator: U,
@@ -34,7 +34,7 @@ where
     enable_compaction: bool,   // コンパクションを有効にするかどうか
 }
 
-impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTreeConf<T, U> {
+impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator + Send + Sync + 'static> LSMTreeConf<T, U> {
     pub fn new(
         compaction: T,
         timestamp_generator: U,
@@ -75,27 +75,31 @@ where
     T: Compaction,
     U: TimeStampGenerator,
 {
-    memtable: MemTable,
+    memtable: Arc<Mutex<MemTable>>,
     memtable_threshold: usize,
     index_interval: usize,
     index_file_suffix: String,
-    commitlog: CommitLog,
+    commitlog: Arc<Mutex<CommitLog>>,
     sst_dir: String,
     compaction: T,
     timestamp_generator: U,
 }
 
-impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTree<T, U> {
+impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Send + Sync + 'static> LSMTree<T, U> {
     pub fn new(conf: LSMTreeConf<T, U>) -> Result<LSMTree<T, U>, String> {
         Self::create_dir(&conf.sst_dir)?;
         Self::create_dir(&conf.commitlog_dir)?;
 
         let lsm_tree = LSMTree {
-            memtable: MemTable::new(),
+            memtable: Arc::new(
+                Mutex::new(MemTable::new())
+            ),
             memtable_threshold: conf.memtable_threshold,
             index_interval: conf.index_interval,
             index_file_suffix: conf.index_file_suffix.clone(),
-            commitlog: CommitLog::new(&conf.commitlog_dir)?,
+            commitlog: Arc::new(
+                Mutex::new(CommitLog::new(&conf.commitlog_dir)?)
+            ),
             sst_dir: conf.sst_dir.clone(),
             compaction: conf.compaction.clone(),
             timestamp_generator: conf.timestamp_generator,
@@ -144,11 +148,9 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
         });
     }
 
-    // コンパクションのためのSSTableのリストを取得（シンプルな実装）
     fn get_sstables_for_compaction(dir: &str, idx_file_suffix: &str) -> Vec<SSTableReader> {
         let mut sstables = Vec::new();
         
-        // ディレクトリの読み取りに失敗した場合は空のベクターを返す
         let dir_entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(e) => {
@@ -157,9 +159,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
             }
         };
         
-        // 各エントリを処理
         for entry_result in dir_entries {
-            // エントリの取得に失敗した場合は次のエントリへ
             let entry = match entry_result {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -167,32 +167,26 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
             
             let path = entry.path();
             
-            // ファイルでない場合はスキップ
             if !path.is_file() {
                 continue;
             }
             
-            // ファイル名を取得
             let file_name = match path.file_name().and_then(|n| n.to_str()) {
                 Some(name) => name,
                 None => continue,
             };
             
-            // .sstファイルでない場合はスキップ
             if !file_name.ends_with(".sst") {
                 continue;
             }
             
-            // インデックスファイルのパスを作成
             let idx_file_name = format!("{}.{}", file_name, idx_file_suffix);
             let idx_path = path.with_file_name(idx_file_name);
             
-            // インデックスファイルが存在しない場合はスキップ
             if !idx_path.exists() {
                 continue;
             }
             
-            // SSTableReaderの作成
             match SSTableReader::new(
                 path.to_str().unwrap(), 
                 idx_path.to_str().unwrap()) {
@@ -222,42 +216,58 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
         }
     }
 
-    pub fn put(&mut self, key: &str, value: Option<&str>) -> Result<Option<Value>, String> {
+    pub fn put(&mut self, key: &str, value: Option<&str>) -> Result<(), String> {
         let timestamp = self.timestamp_generator.get_timestamp();
-        let ret = match value {
-            Some(value) => {
-                self.commitlog.write_put(key, value, timestamp);
-                self.memtable.put(key, value, timestamp)
-            },
-            None => {
-                self.commitlog.write_delete(key, timestamp);
-                self.memtable.delete(key, timestamp)
-            }
-        };
-        if self.memtable.len() >= self.memtable_threshold {    
-            // 大きいデータ構造なのでディープコピーの場合、パフォーマンスが悪い
-            // ただ、現在の実装だと借用状態なので、ムーブができない
+        if let Some((memtable, commitlog)) = self.atomic_write_memtable(key, value, timestamp)? {
             let dir = self.sst_dir.clone();
             let index_interval = self.index_interval;
-            let memtable = self.memtable.clone();
-            let commitlog = self.commitlog.try_clone()?;
-            self.memtable = MemTable::new();
-            self.commitlog = CommitLog::new(self.commitlog.get_dir())?;
-            spawn( move || {
-                let ret = Self::flush_memtable(&dir, memtable, index_interval);
-                match ret {
-                    Ok(_) => {
-                        println!("Flushed memtable");
-                        match commitlog.delete_log() {
-                            Err(e) => eprintln!("ERROR: delete {} Error because of: {}", commitlog.get_file_path(), e),
-                            _ => println!("INFO: {} is deleted", commitlog.get_file_path()),
-                        }
-                    },
-                    Err(e) => eprintln!("ERROR: flush_memtable Error because of: {}", e),
-                }
+            spawn(move || {
+                Self::flush_memtable(dir, memtable, commitlog, index_interval);
             });
         }
-        Ok(ret.map(|v| v.to_string()))
+        Ok(())
+    }
+
+    fn atomic_write_memtable(&mut self, key: &str, value: Option<&str>, timestamp: u64) -> Result<Option<(MemTable, CommitLog)>, String> {
+        let commitlog = Arc::clone(&self.commitlog);
+        let mut commitlog = commitlog.lock().map_err(|e| e.to_string())?;
+        let memtable = Arc::clone(&self.memtable);
+        let mut memtable = memtable.lock().map_err(|e| e.to_string())?;
+
+        let _ = match value {
+            Some(value) => {
+                commitlog.write_put(key, value, timestamp);
+                memtable.put(key, value, timestamp)
+            },
+            None => {
+                commitlog.write_delete(key, timestamp);
+                memtable.delete(key, timestamp)
+            }
+        };
+
+        let ret = if memtable.len() >= self.memtable_threshold {
+            let memtable = memtable.clone();
+            let commitlog = commitlog.try_clone().unwrap();
+ 
+            self.memtable = Arc::new(Mutex::new(MemTable::new()));
+            self.commitlog = Arc::new(Mutex::new(CommitLog::new(&commitlog.get_dir()).unwrap()));
+
+            Some((memtable, commitlog))
+        } else {
+            None
+        };
+
+        Ok(ret)
+
+        // match ret {
+        //     Some(value) => {
+        //         match value {
+        //             memtable::Value::Data(value, _) => Ok(Some(value.to_string())),
+        //             memtable::Value::Tombstone(_) => Ok(None),
+        //         }
+        //     },
+        //     None => Ok(None),
+        // }
     }
 
     // 手動でコンパクションを実行するためのメソッド（テスト用）
@@ -271,14 +281,29 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
         self.compaction.compact(sstables, writer)
     }
 
-    fn flush_memtable(dir: &str, memtable: MemTable, index_interval: usize) -> Result<(), String> {
-        let sstable = SSTableWriter::new(dir)?;
-        sstable.write(&memtable, index_interval)?;
-        Ok(())
+    fn flush_memtable(dir: String, memtable: MemTable, commitlog: CommitLog, index_interval: usize) {
+        let sstable = SSTableWriter::new(&dir).unwrap();
+        let ret = sstable.write(&memtable, index_interval);
+        match ret {
+            Ok(_) => {
+                println!("Flushed memtable");
+                match commitlog.delete_log() {
+                    Err(e) => eprintln!("ERROR: delete {} Error because of: {}", commitlog.get_file_path(), e),
+                    _ => println!("INFO: {} is deleted", commitlog.get_file_path()),
+                }
+            },
+            Err(e) => eprintln!("ERROR: flush_memtable Error because of: {}", e),
+        }
     }
 
     pub fn get(&self, key: &str) -> Result<Option<Value>, String> {
-        match self.memtable.get(key) {
+        let value = {
+            let memtable = Arc::clone(&self.memtable);
+            let memtable = memtable.lock().map_err(|e| e.to_string()).map_err(|e| e.to_string())?;
+            memtable.get(key)
+        };
+
+        match value {
             Some(value) => {
                 match value {
                     memtable::Value::Data(value, _) => Ok(Some(value.to_string())),
@@ -319,16 +344,20 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
         Ok(candidate.last().unwrap().0.clone())
     }
 
-    pub fn get_memtable(&self) -> &MemTable {
-        &self.memtable
+    pub fn get_memtable(&self) -> MemTable {
+        let memtable = Arc::clone(&self.memtable);
+        let memtable = memtable.lock().map_err(|e| e.to_string()).unwrap();
+        memtable.clone()
     }
 
     pub fn get_sst_dir(&self) -> &str {
         &self.sst_dir
     }
 
-    pub fn get_commitlog(&self) -> &CommitLog {
-        &self.commitlog
+    pub fn get_commitlog(&self) -> CommitLog {
+        let commitlog = Arc::clone(&self.commitlog);
+        let commitlog = commitlog.lock().map_err(|e| e.to_string()).unwrap();
+        commitlog.try_clone().unwrap()
     }
 
     pub fn get_memtable_threshold(&self) -> usize {
@@ -403,12 +432,15 @@ impl<'a, 'b> Iterator for SSTableReaderIter<'a, 'b> {
         if self.index >= self.sstables.len() {
             return None;
         }
-        let mut reader = self.sstables[self.index].clone();
-        if !reader.is_file_exists() {
-            self.sstables = Self::get_sstables(self.root_dir, self.idx_file_suffix);
-            reader = self.sstables[self.index].clone();
+        let mut reader = self.sstables.get(self.index);
+        while reader.is_none() {
+            if self.index >= self.sstables.len() {
+                return None;
+            }
+            reader = self.sstables.get(self.index);
         }
+        let reader = reader.unwrap();
         self.index += 1;
-        Some(reader)
+        Some(reader.clone())
     }
 }

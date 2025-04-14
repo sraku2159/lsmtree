@@ -3,7 +3,7 @@ use libc::{sysconf, _SC_PAGESIZE};
 
 pub fn get_timestamp() -> u64 {
     let now = chrono::Utc::now();
-    let timestamp = now.timestamp_millis() as u64;
+    let timestamp = now.timestamp_micros() as u64;
     timestamp
 }
 

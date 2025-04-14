@@ -56,11 +56,11 @@ fn test_get_with_size_tiered() {
             None,
             Some(index_interval),
             Some("idx".to_owned()),
-            Some(300),         // コンパクション間隔: 5分（テストでは使用されない）
-            Some(false),       // コンパクションを無効化
+            Some(2),
+            Some(true),
     )).unwrap();
     for (key, value) in data.iter() {
-        assert_eq!(lsm_tree.put(*key, Some(*value)).unwrap(), None);
+        assert!(lsm_tree.put(*key, Some(*value)).is_ok());
     }
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.get(*key), Ok(Some(value.to_string())));
@@ -87,7 +87,7 @@ fn test_get_with_size_leveled() {
             Some(false),       // コンパクションを無効化
     )).unwrap();
     for (key, value) in data.iter() {
-        assert_eq!(lsm_tree.put(*key, Some(*value)).unwrap(), None);
+        assert!(lsm_tree.put(*key, Some(*value)).is_ok());
     }
     for (key, value) in data.iter() {
         assert_eq!(lsm_tree.get(*key), Ok(Some(value.to_string())));
@@ -129,11 +129,61 @@ fn test_get_big_quantity() {
      */
     // 3391.58s
     for i in 0..104857 {
-        assert_eq!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).unwrap(), None);
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).is_ok());
     }
     let now = std::time::Instant::now();
     assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
     for i in 0..104857 {
+        assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i))));
+    }
+    println!("Elapsed time: {:?}", now.elapsed());
+    tear_down(sst_dir, commitlog_dir);
+}
+
+#[test]
+fn test_get_mid_quantity_with_ssts() {
+    let sst_dir = "./.test_get_mid_quantity_sst_with_ssts";
+    let commitlog_dir = "./.test_get_mid_quantity_with_ssts_commitlog";
+    let index_interval = get_page_size();
+
+    if fs::exists(sst_dir).unwrap() {
+        fs::remove_dir_all(sst_dir).unwrap();
+    }
+    if fs::exists(commitlog_dir).unwrap() {
+        fs::remove_dir_all(commitlog_dir).unwrap();
+    }
+
+    let mut lsm_tree = LSMTree::new(
+        LSMTreeConf::new(
+            SizeTieredCompaction::new(
+                get_page_size(),
+                Some(0.5),
+                Some(1.5),
+                Some(4),
+            ),
+            MockTimeStampGenerator::new(),
+            Some(sst_dir.to_owned()),
+            Some(commitlog_dir.to_owned()),
+            None,
+            Some(index_interval),
+            Some("idx".to_owned()),
+            Some(5),
+            Some(true),
+    )).unwrap();
+    /*
+        * 大体1MBのデータを入れる
+        * 1MB = 1024KB = 1024 * 1024B = 1048576B
+        * 1key ≒ 4B, 1value ≒ 6B
+        * 1entry ≒ 10B
+        * 1048576B / 10B ≒ 104857
+     */
+    // 3391.58s
+    for i in 0..3000 {
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).is_ok());
+    }
+    let now = std::time::Instant::now();
+    assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
+    for i in 0..3000 {
         assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(Some(format!("value{}", i))));
     }
     println!("Elapsed time: {:?}", now.elapsed());
@@ -180,15 +230,15 @@ fn test_get_big_quantity_with_ssts() {
     // 3391.58s
     let cnt = 104856 / 3;
     for i in 0..cnt {
-        assert_eq!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i))).unwrap(), None);
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i))).is_ok());
     }
     let _ = lsm_tree.put("key1", None);
     for i in 0..cnt {
-        assert_eq!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i + cnt * 2))).unwrap(), None);
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i + cnt * 2))).is_ok());
     }
     let _ = lsm_tree.put("key2", None);
     for i in 0..cnt {
-        assert_eq!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i + cnt))).unwrap(), None);
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&"a".repeat(i + cnt))).is_ok());
     }
     let _ = lsm_tree.put("key3", None);
     let _ = lsm_tree.put(&format!("key{}", 104856 / 6), None);

@@ -50,7 +50,7 @@ fn test_put_big_quantity() {
         * 1048576B / 10B ≒ 104857
      */
     for i in 0..104857 {
-        assert_eq!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).unwrap(), None);
+        assert!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).is_ok());
     }
     let read_dir = read_dir(sst_dir).unwrap();
 
