@@ -49,6 +49,10 @@ impl MemTable {
         })
     }
 
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
+
     pub fn len(&self) -> usize {
         self.data.iter().map(|(key, value)| {
             let key_len = key.len() + std::mem::size_of::<u64>(); // key_len + timestamp

@@ -3,7 +3,7 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, sync::{Arc, Mutex}, thread::{sleep, spawn}, time::Duration};
+use std::{fmt::Debug, sync::Mutex, thread::{sleep, spawn}, time::Duration};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
@@ -75,11 +75,12 @@ where
     T: Compaction,
     U: TimeStampGenerator,
 {
-    memtable: Arc<Mutex<MemTable>>,
+    // memtable: Arc<Mutex<MemTable>>,
+    memtable: Mutex<MemTable>,
+    commitlog: Mutex<CommitLog>,
     memtable_threshold: usize,
     index_interval: usize,
     index_file_suffix: String,
-    commitlog: Arc<Mutex<CommitLog>>,
     sst_dir: String,
     compaction: T,
     timestamp_generator: U,
@@ -91,15 +92,17 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         Self::create_dir(&conf.commitlog_dir)?;
 
         let lsm_tree = LSMTree {
-            memtable: Arc::new(
-                Mutex::new(MemTable::new())
-            ),
+            // memtable: Arc::new(
+            //     Mutex::new(MemTable::new())
+            // ),
+            memtable: Mutex::new(MemTable::new()),
             memtable_threshold: conf.memtable_threshold,
             index_interval: conf.index_interval,
             index_file_suffix: conf.index_file_suffix.clone(),
-            commitlog: Arc::new(
-                Mutex::new(CommitLog::new(&conf.commitlog_dir)?)
-            ),
+            // commitlog: Arc::new(
+            //     Mutex::new(CommitLog::new(&conf.commitlog_dir)?)
+            // ),
+            commitlog: Mutex::new(CommitLog::new(&conf.commitlog_dir)?),
             sst_dir: conf.sst_dir.clone(),
             compaction: conf.compaction.clone(),
             timestamp_generator: conf.timestamp_generator,
@@ -229,10 +232,8 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     fn atomic_write_memtable(&mut self, key: &str, value: Option<&str>, timestamp: u64) -> Result<Option<(MemTable, CommitLog)>, String> {
-        let commitlog = Arc::clone(&self.commitlog);
-        let memtable = Arc::clone(&self.memtable);
-        let mut commitlog = commitlog.lock().map_err(|e| e.to_string())?;
-        let mut memtable = memtable.lock().map_err(|e| e.to_string())?;
+        let mut commitlog = self.commitlog.lock().map_err(|e| e.to_string())?;
+        let mut memtable = self.memtable.lock().map_err(|e| e.to_string())?;
 
         let _ = match value {
             Some(value) => {
@@ -246,12 +247,14 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         };
 
         let ret = if memtable.len() >= self.memtable_threshold {
-            let memtable = memtable.clone();
-            let commitlog = commitlog.try_clone().unwrap();
-            self.memtable = Arc::new(Mutex::new(MemTable::new()));
-            self.commitlog = Arc::new(Mutex::new(CommitLog::new(&commitlog.get_dir()).unwrap()));
+            let cloned_memtable = memtable.clone();
+            let cloned_commitlog = commitlog.try_clone().unwrap();
+            drop(memtable);
+            self.memtable = Mutex::new(MemTable::new());
+            drop(commitlog);
+            self.commitlog = Mutex::new(CommitLog::new(&cloned_commitlog.get_dir()).unwrap());
 
-            Some((memtable, commitlog))
+            Some((cloned_memtable, cloned_commitlog))
         } else {
             None
         };
@@ -297,9 +300,11 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
     pub fn get(&self, key: &str) -> Result<Option<Value>, String> {
         let value = {
-            let memtable = Arc::clone(&self.memtable);
-            let memtable = memtable.lock().map_err(|e| e.to_string()).map_err(|e| e.to_string())?;
-            memtable.get(key)
+            // let memtable = Arc::clone(&self.memtable);
+            // let memtable = memtable.lock().map_err(|e| e.to_string()).map_err(|e| e.to_string())?;
+            self.memtable.lock().map_err(|e| e.to_string()).and_then(|memtable| {
+                Ok(memtable.get(key))
+            })?
         };
 
         match value {
@@ -344,8 +349,9 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     pub fn get_memtable(&self) -> MemTable {
-        let memtable = Arc::clone(&self.memtable);
-        let memtable = memtable.lock().map_err(|e| e.to_string()).unwrap();
+        // let memtable = Arc::clone(&self.memtable);
+        // let memtable = memtable.lock().map_err(|e| e.to_string()).unwrap();
+        let memtable = self.memtable.lock().map_err(|e| e.to_string()).unwrap();
         memtable.clone()
     }
 
@@ -354,8 +360,9 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     pub fn get_commitlog(&self) -> CommitLog {
-        let commitlog = Arc::clone(&self.commitlog);
-        let commitlog = commitlog.lock().map_err(|e| e.to_string()).unwrap();
+        // let commitlog = Arc::clone(&self.commitlog);
+        // let commitlog = commitlog.lock().map_err(|e| e.to_string()).unwrap();
+        let commitlog = self.commitlog.lock().map_err(|e| e.to_string()).unwrap();
         commitlog.try_clone().unwrap()
     }
 
