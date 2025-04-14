@@ -118,7 +118,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         Ok(lsm_tree)
     }
 
-    // 定期的にコンパクションを実行するスレッドを起動
+    // TODO: これがちゃんと動いているかの確認
     fn start_compaction_thread(
         sst_dir: String,
         index_file_suffix: String,
@@ -382,25 +382,21 @@ impl TimeStampGenerator for DefaultTimeStampGenerator {
     }
 }
 
-struct SSTableReaderIter<'a, 'b> {
-    root_dir: &'a String,
-    idx_file_suffix: &'b String,
+struct SSTableReaderIter {
     sstables: Vec<SSTableReader>,
     index: usize,
 }
 
-impl<'a, 'b> SSTableReaderIter<'a, 'b> {
-    fn new(root_dir: &'a String, idx_file_suffix: &'b String) -> SSTableReaderIter<'a, 'b> {
+impl SSTableReaderIter {
+    fn new(root_dir: & String, idx_file_suffix: & String) -> SSTableReaderIter {
         let sstables = Self::get_sstables(root_dir, idx_file_suffix);
         SSTableReaderIter {
             sstables,
             index: 0,
-            root_dir,
-            idx_file_suffix,
         }
     }
 
-    fn get_sstables(root_dir: &'a String, idx_file_suffix: &'b String) -> Vec<SSTableReader> {
+    fn get_sstables(root_dir: & String, idx_file_suffix: & String) -> Vec<SSTableReader> {
         let mut sstables = Vec::new();
         let dir = std::fs::read_dir(root_dir).unwrap();
         for entry in dir {
@@ -424,7 +420,7 @@ impl<'a, 'b> SSTableReaderIter<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Iterator for SSTableReaderIter<'a, 'b> {
+impl Iterator for SSTableReaderIter {
     type Item = SSTableReader;
 
     fn next(&mut self) -> Option<Self::Item> {

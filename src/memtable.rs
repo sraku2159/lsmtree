@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Display};
 
 type Key = String;
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Data(String, u64), // (value, timestamp)
     /*
@@ -23,7 +23,7 @@ impl Display for Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemTable {
     data: BTreeMap<Key, Value>, 
 }
