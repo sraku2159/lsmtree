@@ -230,8 +230,8 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
     fn atomic_write_memtable(&mut self, key: &str, value: Option<&str>, timestamp: u64) -> Result<Option<(MemTable, CommitLog)>, String> {
         let commitlog = Arc::clone(&self.commitlog);
-        let mut commitlog = commitlog.lock().map_err(|e| e.to_string())?;
         let memtable = Arc::clone(&self.memtable);
+        let mut commitlog = commitlog.lock().map_err(|e| e.to_string())?;
         let mut memtable = memtable.lock().map_err(|e| e.to_string())?;
 
         let _ = match value {
@@ -248,7 +248,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         let ret = if memtable.len() >= self.memtable_threshold {
             let memtable = memtable.clone();
             let commitlog = commitlog.try_clone().unwrap();
- 
             self.memtable = Arc::new(Mutex::new(MemTable::new()));
             self.commitlog = Arc::new(Mutex::new(CommitLog::new(&commitlog.get_dir()).unwrap()));
 
