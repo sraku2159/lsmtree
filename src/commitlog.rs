@@ -48,6 +48,11 @@ impl CommitLog {
         self.append(&entry, timestamp);
     }
 
+    pub fn write_delete(&mut self, key: &str, timestamp: u64) {
+        let entry = CommitLogEntry::new("DELETE", key, None);
+        self.append(&entry, timestamp);
+    }
+
     pub fn delete_log(&self) -> Result<(), String> {
         remove_file(&self.get_file_path()).map_err(|e| e.to_string())
     }

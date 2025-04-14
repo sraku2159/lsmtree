@@ -129,7 +129,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
                 
                 // コンパクションを実行
                 let sstables = Self::get_sstables_for_compaction(&sst_dir, &index_file_suffix);
-                println!("sstables: {:?}", sstables);
                 if sstables.len() > 1 {
                     match SSTableWriter::new(&sst_dir) {
                         Ok(writer) => {
@@ -223,10 +222,18 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator> LSMTr
         }
     }
 
-    pub fn put(&mut self, key: &str, value: &str) -> Result<Option<Value>, String> {
+    pub fn put(&mut self, key: &str, value: Option<&str>) -> Result<Option<Value>, String> {
         let timestamp = self.timestamp_generator.get_timestamp();
-        let ret = self.memtable.put(key, value, timestamp);
-        self.commitlog.write_put(key, value, timestamp);
+        let ret = match value {
+            Some(value) => {
+                self.commitlog.write_put(key, value, timestamp);
+                self.memtable.put(key, value, timestamp)
+            },
+            None => {
+                self.commitlog.write_delete(key, timestamp);
+                self.memtable.delete(key, timestamp)
+            }
+        };
         if self.memtable.len() >= self.memtable_threshold {    
             // 大きいデータ構造なのでディープコピーの場合、パフォーマンスが悪い
             // ただ、現在の実装だと借用状態なので、ムーブができない
