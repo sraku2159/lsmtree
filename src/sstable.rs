@@ -125,18 +125,13 @@ impl SSTableIndex {
             + std::mem::size_of::<Offset>() as u64
     })}
 
+    #[cfg(test)]
     fn get(&self, key: &Key) -> Option<&Offset> {
         self.0.get(key)
     }
 
     fn insert(&mut self, key: Key, offset: Offset) {
         self.0.insert(key, offset);
-    }
-
-    fn iter(&self) -> SSTableIndexIterator {
-        SSTableIndexIterator {
-            iter: self.0.iter(),
-        }
     }
 }
 
@@ -217,13 +212,8 @@ impl SSTableData {
         })
     }
 
-    fn get_first_keys(&self) -> Vec<Key> {
-        self.chunks.iter().map(|chunk| {
-            chunk.0[0].0.clone()
-        }).collect()
-    }
-
     // raw data length
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.chunks.iter().fold(0, |acc, chunk| {
             acc + chunk.size()
@@ -258,17 +248,6 @@ impl SSTableData {
             }
         }
         self.binary_search_get(key)
-    }
-
-    fn brute_force_get(&self, key: &Key) -> Option<&Value> {
-        for chunk in &self.chunks {
-            for record in &chunk.0 {
-                if record.0 == *key {
-                    return Some(record.value());
-                }
-            }
-        }
-        None
     }
 
     // [left, right)
@@ -384,13 +363,6 @@ pub struct SSTableRecords(Vec<SSTableRecord>);
 impl SSTableRecords {
     fn new() -> SSTableRecords {
         SSTableRecords(vec![])
-    }
-
-    fn encode(&self) -> Vec<u8> {
-        self.0.iter().fold(vec![], |mut acc, record| {
-            acc.extend_from_slice(&record.encode());
-            acc
-        })
     }
 
     fn decode(data: &[u8], threadhold: usize) -> Result<(Self, usize), String> {

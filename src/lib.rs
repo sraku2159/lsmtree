@@ -3,7 +3,7 @@ pub mod commitlog;
 pub mod sstable;
 pub mod utils;
 
-use std::{fmt::Debug, sync::Mutex, thread::{sleep, spawn}, time::Duration};
+use std::{fmt::Debug, sync::{Arc, Mutex}, thread::{self, sleep, spawn}, time::Duration};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
@@ -79,76 +79,76 @@ where
     memtable: Mutex<MemTable>,
     commitlog: Mutex<CommitLog>,
     memtable_threshold: usize,
-    index_interval: usize,
-    index_file_suffix: String,
-    sst_dir: String,
+    index_interval: Arc<usize>,
+    index_file_suffix: Arc<String>,
+    sst_dir: Arc<String>,
     compaction: T,
     timestamp_generator: U,
+    thread: Arc<Option<thread::JoinHandle<()>>>,
+    compaction_target: Arc<Mutex<Vec<SSTableReader>>>,
 }
 
 impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Send + Sync + 'static> LSMTree<T, U> {
     pub fn new(conf: LSMTreeConf<T, U>) -> Result<LSMTree<T, U>, String> {
         Self::create_dir(&conf.sst_dir)?;
         Self::create_dir(&conf.commitlog_dir)?;
+        let compaction_target = Arc::new(Mutex::new(vec![]));
+        let sst_dir = Arc::new(conf.sst_dir);
 
-        let lsm_tree = LSMTree {
-            // memtable: Arc::new(
-            //     Mutex::new(MemTable::new())
-            // ),
-            memtable: Mutex::new(MemTable::new()),
-            memtable_threshold: conf.memtable_threshold,
-            index_interval: conf.index_interval,
-            index_file_suffix: conf.index_file_suffix.clone(),
-            // commitlog: Arc::new(
-            //     Mutex::new(CommitLog::new(&conf.commitlog_dir)?)
-            // ),
-            commitlog: Mutex::new(CommitLog::new(&conf.commitlog_dir)?),
-            sst_dir: conf.sst_dir.clone(),
-            compaction: conf.compaction.clone(),
-            timestamp_generator: conf.timestamp_generator,
+        let thread = if conf.enable_compaction {
+            Some(Self::start_compaction_thread(
+                sst_dir.clone(),
+                &compaction_target.clone(),
+                conf.compaction.clone(),
+                conf.compaction_interval.clone(),
+            ))
+        } else {
+            None
         };
 
-        // コンパクションが有効な場合、定期的にコンパクションを実行するスレッドを起動
-        if conf.enable_compaction {
-            Self::start_compaction_thread(
-                conf.sst_dir,
-                conf.index_file_suffix,
-                conf.compaction,
-                conf.compaction_interval,
-            );
-        }
+        let lsm_tree = LSMTree {
+            memtable: Mutex::new(MemTable::new()),
+            memtable_threshold: conf.memtable_threshold,
+            index_interval: Arc::new(conf.index_interval),
+            index_file_suffix: Arc::new(conf.index_file_suffix),
+            commitlog: Mutex::new(CommitLog::new(&conf.commitlog_dir)?),
+            sst_dir: sst_dir,
+            compaction: conf.compaction,
+            timestamp_generator: conf.timestamp_generator,
+            thread: Arc::new(thread),
+            compaction_target: compaction_target,
+        };
 
         Ok(lsm_tree)
     }
 
-    // TODO: これがちゃんと動いているかの確認
     fn start_compaction_thread(
-        sst_dir: String,
-        index_file_suffix: String,
+        sst_dir: Arc<String>,
+        sstables: &Arc<Mutex<Vec<SSTableReader>>>,
         compaction: T,
         interval_seconds: u64,
-    ) {
+    ) -> thread::JoinHandle<()> {
+        let sst_dir = sst_dir.clone();
+        let sstables = sstables.clone();
+
         spawn(move || {
             loop {
-                // 指定された間隔でスリープ
                 sleep(Duration::from_secs(interval_seconds));
-                println!("Periodic compaction started");
+                thread::park();
+                println!("compaction started");
+                let sstables = sstables.lock().map_err(|e| e.to_string()).unwrap().to_vec();
                 
-                // コンパクションを実行
-                let sstables = Self::get_sstables_for_compaction(&sst_dir, &index_file_suffix);
-                if sstables.len() > 1 {
-                    match SSTableWriter::new(&sst_dir) {
-                        Ok(writer) => {
-                            match compaction.compact(sstables, writer) {
-                                Ok(_) => println!("Periodic compaction completed successfully"),
-                                Err(e) => eprintln!("ERROR: periodic compaction failed: {}", e),
-                            }
-                        },
-                        Err(e) => eprintln!("ERROR: Failed to create SSTableWriter for periodic compaction: {}", e),
-                    }
+                match SSTableWriter::new(&sst_dir) {
+                    Ok(writer) => {
+                        match compaction.compact(sstables, writer) {
+                            Ok(_) => println!("compaction completed successfully"),
+                            Err(e) => eprintln!("ERROR: compaction failed: {}", e),
+                        }
+                    },
+                    Err(e) => eprintln!("ERROR: Failed to create SSTableWriter for compaction: {}", e),
                 }
             }
-        });
+        })
     }
 
     fn get_sstables_for_compaction(dir: &str, idx_file_suffix: &str) -> Vec<SSTableReader> {
@@ -223,9 +223,23 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         let timestamp = self.timestamp_generator.get_timestamp();
         if let Some((memtable, commitlog)) = self.atomic_write_memtable(key, value, timestamp)? {
             let dir = self.sst_dir.clone();
-            let index_interval = self.index_interval;
+            let index_interval = self.index_interval.clone();
+            let thread = Arc::clone(&self.thread);
+            let compaction_target = Arc::clone(&self.compaction_target);
+            let idx_file_suffix = self.index_file_suffix.clone();
+
             spawn(move || {
-                Self::flush_memtable(dir, memtable, commitlog, index_interval);
+                Self::flush_memtable(dir.as_ref(), memtable, commitlog, *index_interval.as_ref());
+                {
+                    let sstables = Self::get_sstables_for_compaction(&dir, &idx_file_suffix);
+                    if sstables.len() > 1 {
+                        if let Some(thread) = thread.as_ref() {
+                            let mut compaction_target = compaction_target.lock().map_err(|e| e.to_string()).unwrap();
+                            *compaction_target = sstables;
+                            thread.thread().unpark();
+                        }
+                    }
+                }
             });
         }
         Ok(())
@@ -248,7 +262,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
         let ret = if memtable.len() >= self.memtable_threshold {
             let cloned_memtable = memtable.clone();
-            let cloned_commitlog = commitlog.try_clone().unwrap();
+            let cloned_commitlog = commitlog.try_clone()?;
             drop(memtable);
             self.memtable = Mutex::new(MemTable::new());
             drop(commitlog);
@@ -260,16 +274,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         };
 
         Ok(ret)
-
-        // match ret {
-        //     Some(value) => {
-        //         match value {
-        //             memtable::Value::Data(value, _) => Ok(Some(value.to_string())),
-        //             memtable::Value::Tombstone(_) => Ok(None),
-        //         }
-        //     },
-        //     None => Ok(None),
-        // }
     }
 
     // 手動でコンパクションを実行するためのメソッド（テスト用）
@@ -283,7 +287,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         self.compaction.compact(sstables, writer)
     }
 
-    fn flush_memtable(dir: String, memtable: MemTable, commitlog: CommitLog, index_interval: usize) {
+    fn flush_memtable(dir: &String, memtable: MemTable, commitlog: CommitLog, index_interval: usize) {
         let sstable = SSTableWriter::new(&dir).unwrap();
         let ret = sstable.write(&memtable, index_interval);
         match ret {
@@ -328,7 +332,10 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
                 Ok(value) => {
                     candidate.push(value.unwrap());
                 },
-                Err(e) => return Err(e),
+                Err(e) => {
+                    dbg!("ERROR: get_from_sstable Error because of: {}", &e);
+                    return Err(e)
+                },
             }
         }
         if candidate.is_empty() {
@@ -349,8 +356,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     pub fn get_memtable(&self) -> MemTable {
-        // let memtable = Arc::clone(&self.memtable);
-        // let memtable = memtable.lock().map_err(|e| e.to_string()).unwrap();
         let memtable = self.memtable.lock().map_err(|e| e.to_string()).unwrap();
         memtable.clone()
     }
@@ -360,8 +365,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     pub fn get_commitlog(&self) -> CommitLog {
-        // let commitlog = Arc::clone(&self.commitlog);
-        // let commitlog = commitlog.lock().map_err(|e| e.to_string()).unwrap();
         let commitlog = self.commitlog.lock().map_err(|e| e.to_string()).unwrap();
         commitlog.try_clone().unwrap()
     }
