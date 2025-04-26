@@ -133,7 +133,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
         spawn(move || {
             loop {
-                sleep(Duration::from_secs(interval_seconds));
                 thread::park();
                 println!("compaction started");
                 let sstables = sstables.lock().map_err(|e| e.to_string()).unwrap().to_vec();
