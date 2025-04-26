@@ -6,9 +6,14 @@ use lsmtree::{sstable::{compaction::Compaction, SSTableReader, SSTableWriter}, L
 pub struct MockCompaction {}
 
 impl Compaction for MockCompaction {
-    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+    fn compact(
+        &self,
+        sstables: Vec<SSTableReader>,
+        rwlock_for_sstables: &std::sync::RwLock<()>,
+        writer: SSTableWriter) -> Result<(), String> {
         let _ = sstables;
         let _ = writer;
+        let _ = rwlock_for_sstables;
         unimplemented!("MockCompaction::compact is not implemented");
     }
 }

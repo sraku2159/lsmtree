@@ -2,8 +2,9 @@ pub mod memtable;
 pub mod commitlog;
 pub mod sstable;
 pub mod utils;
+mod thread_pool;
 
-use std::{fmt::Debug, sync::{Arc, Mutex}, thread::{self, sleep, spawn}, time::Duration};
+use std::{fmt::Debug, sync::{Arc, Mutex, RwLock}, thread::{self, spawn}};
 
 use memtable::MemTable;
 use commitlog::CommitLog;
@@ -86,6 +87,8 @@ where
     timestamp_generator: U,
     thread: Arc<Option<thread::JoinHandle<()>>>,
     compaction_target: Arc<Mutex<Vec<SSTableReader>>>,
+    rwlock_for_sstable_reader: Arc<RwLock<()>>,
+    thread_pool: thread_pool::ThreadPool,
 }
 
 impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Send + Sync + 'static> LSMTree<T, U> {
@@ -94,13 +97,14 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         Self::create_dir(&conf.commitlog_dir)?;
         let compaction_target = Arc::new(Mutex::new(vec![]));
         let sst_dir = Arc::new(conf.sst_dir);
+        let rwlock_for_sstable_reader = Arc::new(RwLock::new(()));
 
         let thread = if conf.enable_compaction {
             Some(Self::start_compaction_thread(
                 sst_dir.clone(),
                 &compaction_target.clone(),
                 conf.compaction.clone(),
-                conf.compaction_interval.clone(),
+                rwlock_for_sstable_reader.clone(),
             ))
         } else {
             None
@@ -117,6 +121,8 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
             timestamp_generator: conf.timestamp_generator,
             thread: Arc::new(thread),
             compaction_target: compaction_target,
+            rwlock_for_sstable_reader: rwlock_for_sstable_reader,
+            thread_pool: thread_pool::ThreadPool::new(100),
         };
 
         Ok(lsm_tree)
@@ -126,10 +132,11 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         sst_dir: Arc<String>,
         sstables: &Arc<Mutex<Vec<SSTableReader>>>,
         compaction: T,
-        interval_seconds: u64,
+        rwlock_for_sstable_reader: Arc<RwLock<()>>,
     ) -> thread::JoinHandle<()> {
         let sst_dir = sst_dir.clone();
         let sstables = sstables.clone();
+        let rwl = rwlock_for_sstable_reader.clone();
 
         spawn(move || {
             loop {
@@ -139,7 +146,11 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
                 
                 match SSTableWriter::new(&sst_dir) {
                     Ok(writer) => {
-                        match compaction.compact(sstables, writer) {
+                        match compaction.compact(
+                            sstables,
+                            rwl.as_ref(),
+                            writer
+                        ) {
                             Ok(_) => println!("compaction completed successfully"),
                             Err(e) => eprintln!("ERROR: compaction failed: {}", e),
                         }
@@ -227,7 +238,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
             let compaction_target = Arc::clone(&self.compaction_target);
             let idx_file_suffix = self.index_file_suffix.clone();
 
-            spawn(move || {
+            self.thread_pool.execute(move || {
                 Self::flush_memtable(dir.as_ref(), memtable, commitlog, *index_interval.as_ref());
                 {
                     let sstables = Self::get_sstables_for_compaction(&dir, &idx_file_suffix);
@@ -283,7 +294,10 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         }
         
         let writer = SSTableWriter::new(&self.sst_dir)?;
-        self.compaction.compact(sstables, writer)
+        self.compaction.compact(
+            sstables, 
+            self.rwlock_for_sstable_reader.as_ref(),
+            writer)
     }
 
     fn flush_memtable(dir: &String, memtable: MemTable, commitlog: CommitLog, index_interval: usize) {
@@ -323,8 +337,12 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         }
     }
 
-    fn get_from_sstable(&self, key: &str) -> Result<Option<Value>, String> {
+    fn get_from_sstable(
+        &self, 
+        key: &str
+    ) -> Result<Option<Value>, String> {
         let mut candidate = vec![];
+        let rwlock = self.rwlock_for_sstable_reader.read().map_err(|e| e.to_string())?;
         for reader in self.reader_iter() {
             match reader.read(key) {
                 Ok(None) => continue,
@@ -337,6 +355,8 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
                 },
             }
         }
+        drop(rwlock);
+
         if candidate.is_empty() {
             return Ok(None);
         }

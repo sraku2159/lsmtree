@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path, vec};
+use std::{collections::BTreeMap, fs, path, sync::{Arc, RwLock}, vec};
 
 use libc::sleep;
 
@@ -419,8 +419,13 @@ fn test_compact_simple() {
         Some(4)
     );
 
+    let rwl = RwLock::new(());
     let writer = SSTableWriter::new(&path).unwrap();
-    assert!(size_tiered_compaction.compact(target, writer).is_ok());
+    assert!(size_tiered_compaction.compact(
+        target, 
+        &rwl,
+        writer
+    ).is_ok());
 
     let tables = fs::read_dir(&path).unwrap().filter(|v| {
         v.as_ref().unwrap().path().extension().unwrap() == "sst"

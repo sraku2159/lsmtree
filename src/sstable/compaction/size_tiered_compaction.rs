@@ -122,12 +122,18 @@ impl SizeTieredCompaction {
 }
 
 impl Compaction for SizeTieredCompaction {
-    fn compact(&self, sstables: Vec<SSTableReader>, writer: SSTableWriter) -> Result<(), String> {
+    fn compact(
+        &self, 
+        sstables: Vec<SSTableReader>, 
+        rwlock_for_sstables: &std::sync::RwLock<()>,
+        writer: SSTableWriter
+    ) -> Result<(), String> {
         let mut sstables = sstables;
         sstables.sort_by(|a, b| {
             a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
         });
 
+        let rwlock = rwlock_for_sstables.read().unwrap();
         let interestings = self.get_interesting_bucket(&sstables);
         let interestings_data = interestings
             .iter()
@@ -139,11 +145,15 @@ impl Compaction for SizeTieredCompaction {
         }
 
         let compacted = self.merge(interestings_data);
+        drop(rwlock);
+
+        let rwlock = rwlock_for_sstables.write().unwrap();
         writer.write_with_index(&compacted, self.index_interval)?;
         interestings.iter().for_each(|sstable| {
             fs::remove_file(&sstable.file).map_err(|e| e.to_string()).unwrap();
             fs::remove_file(&sstable.index_file).map_err(|e| e.to_string()).unwrap();
         });
+        drop(rwlock);
         Ok(())
     }
 }
