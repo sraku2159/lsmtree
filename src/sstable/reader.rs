@@ -9,12 +9,12 @@ pub struct SSTableReaderManager {
 }
 
 impl SSTableReaderManager {
-    pub fn new(file: &str, index_file: &str) -> Result<Arc<SSTableReaderManager>, String> {
+    pub fn new(file: &str, index_file: &str) -> Result<SSTableReaderManager, String> {
         let reader = SSTableReader::new(file, index_file)?;
-        Ok(Arc::new(SSTableReaderManager {
+        Ok(SSTableReaderManager {
             reader,
             delete: AtomicBool::new(false),
-        }))
+        })
     }
 
     pub fn delete(&self) {
