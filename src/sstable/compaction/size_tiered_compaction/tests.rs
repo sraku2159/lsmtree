@@ -419,11 +419,9 @@ fn test_compact_simple() {
         Some(4)
     );
 
-    let rwl = RwLock::new(());
     let writer = SSTableWriter::new(&path).unwrap();
     assert!(size_tiered_compaction.compact(
         target, 
-        &rwl,
         writer
     ).is_ok());
 

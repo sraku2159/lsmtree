@@ -10,11 +10,9 @@ impl Compaction for MockCompaction {
     fn compact(
         &self, 
         sstables: Vec<SSTableReader>, 
-        rwlock_for_sstables: &std::sync::RwLock<()>,
         writer: SSTableWriter) -> Result<(), String> {
         let _ = writer;
         let _ = sstables;
-        let _ = rwlock_for_sstables;
         unimplemented!("MockCompaction::compact is not implemented");
     }
 }

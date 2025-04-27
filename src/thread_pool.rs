@@ -64,6 +64,7 @@ impl Worker {
                 Ok(job) => {
                     println!("Worker {} got a job; executing.", id);
                     job();
+                    println!("Worker {} finished executing.", id);
                 }
                 Err(_) => {
                     println!("Worker {} disconnected; shutting down.", id);
