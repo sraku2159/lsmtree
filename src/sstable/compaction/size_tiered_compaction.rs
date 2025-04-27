@@ -128,10 +128,10 @@ impl Compaction for SizeTieredCompaction {
         shared: Arc<SharedSSTableReader>, 
         writer: SSTableWriter
     ) -> Result<(), String> {
-        // let mut sstables = sstables;
-        // sstables.sort_by(|a, b| {
-        //     a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
-        // });
+        let mut sstables = shared.to_vec();
+        sstables.sort_by(|a, b| {
+            a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
+        });
 
         let vec = shared.to_vec();
         let interestings = self.get_interesting_bucket(&vec);
