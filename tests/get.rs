@@ -170,13 +170,6 @@ fn test_get_mid_quantity_with_ssts() {
             Some("idx".to_owned()),
             Some(true),
     )).unwrap();
-    /*
-        * 大体1MBのデータを入れる
-        * 1MB = 1024KB = 1024 * 1024B = 1048576B
-        * 1key ≒ 4B, 1value ≒ 6B
-        * 1entry ≒ 10B
-        * 1048576B / 10B ≒ 104857
-     */
     // 3391.58s
     for i in 0..3000 {
         assert!(lsm_tree.put(&format!("key{}", i), Some(&format!("value{}", i))).is_ok());

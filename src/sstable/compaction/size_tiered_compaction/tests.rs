@@ -422,7 +422,10 @@ fn test_compact_simple() {
     writer.write_with_index(&sstable_data5, 34).unwrap();
 
     let tables = fs::read_dir(&path).unwrap();
-    let shared_sstable = SharedSSTableReader::new(path);
+    let shared_sstable = SharedSSTableReader::new(
+        path,
+        "idx",
+    );
 
     for table in tables {
         let table = table.unwrap();

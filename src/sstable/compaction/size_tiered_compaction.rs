@@ -85,6 +85,8 @@ impl SizeTieredCompaction {
     fn get_interesting_bucket(&self, sstables: &Vec<Arc<SSTableReaderManager>>) -> Vec<Arc<SSTableReaderManager>> {
         let mut buckets = Vec::new();
 
+        dbg!(sstables.len());
+
         for sstable in sstables.iter() {
             let metadata = sstable.metadata().unwrap();
             let len = metadata.len() as f64;
@@ -128,19 +130,21 @@ impl Compaction for SizeTieredCompaction {
         shared: Arc<SharedSSTableReader>, 
         writer: SSTableWriter
     ) -> Result<(), String> {
-        let mut sstables = shared.to_vec();
+        let mut sstables = shared.get_all();
         sstables.sort_by(|a, b| {
             a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
         });
 
-        let vec = shared.to_vec();
-        let interestings = self.get_interesting_bucket(&vec);
+        let interestings = self.get_interesting_bucket(&sstables);
         let interestings_data = interestings
             .iter()
             .map(|sstable| sstable.data().unwrap())
             .collect::<Vec<SSTableData>>();
 
         if interestings.len() < self.bucket_threshold {
+            dbg!("skip compaction");
+            dbg!(interestings.len());
+            dbg!(self.bucket_threshold);
             return Ok(());
         }
 

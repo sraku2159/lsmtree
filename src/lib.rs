@@ -20,14 +20,16 @@ pub type Value = String;
 #[derive(Debug)]
 pub struct SharedSSTableReader {
     inner: Mutex<HashMap<String, Arc<SSTableReaderManager>>>,
-    index_file_suffix: String,
+    pub sst_dir: String,
+    pub index_file_suffix: String,
 }
 
 impl SharedSSTableReader {
-    pub fn new(index_file_suffix: &str) -> Arc<Self> {
+    pub fn new(sst_dir: &str, index_file_suffix: &str) -> Arc<Self> {
         let inner = HashMap::new();
         Arc::new(SharedSSTableReader {
             inner: Mutex::new(inner),
+            sst_dir: sst_dir.to_string(),
             index_file_suffix: index_file_suffix.to_string(),
         })
     }
@@ -60,13 +62,34 @@ impl SharedSSTableReader {
         self.add_reader(file)
     }
 
+    pub fn get_all(self: &Arc<Self>) -> Vec<Arc<SSTableReaderManager>> {
+        let mut result = vec![];
+        let dir = std::fs::read_dir(self.sst_dir.clone()).unwrap();
+        for entry in dir {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file() {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                if file_name.ends_with(".sst") {
+                    let idx_file_name = format!("{}.{}", file_name, self.index_file_suffix);
+                    let idx_path = path.with_file_name(idx_file_name);
+                    if idx_path.exists() {
+                        result.push(self.get_reader(path.to_str().unwrap()));
+                    }
+                }
+            }
+        }
+        result
+    }
+
     pub fn add_reader(self: &Arc<Self>, file: &str) -> Arc<SSTableReaderManager> {
         let mut inner = self.inner.lock().unwrap();
         let resource = inner.get(file);
         if resource.is_some() {
             return resource.unwrap().clone();
         }
-        let reader = SSTableReaderManager::new(file, &self.index_file_suffix).unwrap();
+        let index_file = format!("{}.{}", file, self.index_file_suffix);
+        let reader = SSTableReaderManager::new(file, &index_file).unwrap();
         let reader = Arc::new(reader);
         inner.insert(file.to_string(), reader.clone());
         reader
@@ -158,6 +181,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         let rwlock_for_sstable_reader = Arc::new(RwLock::new(()));
 
         let shared_sstable = SharedSSTableReader::new(
+                sst_dir.as_ref(),
                 &conf.index_file_suffix
             );
         let _ = if conf.enable_compaction {
@@ -381,8 +405,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
     pub fn get(&self, key: &str) -> Result<Option<Value>, String> {
         let value = {
-            // let memtable = Arc::clone(&self.memtable);
-            // let memtable = memtable.lock().map_err(|e| e.to_string()).map_err(|e| e.to_string())?;
             self.memtable.lock().map_err(|e| e.to_string()).and_then(|memtable| {
                 Ok(memtable.get(key))
             })?
@@ -408,11 +430,12 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         let mut candidate = vec![];
         dbg!("ここにはきてる");
         let rwlock = self.rwlock_for_sstable_reader.read().map_err(|e| e.to_string())?;
-        dbg!("ここにもきてる");
         for reader in self.readers() {
+            dbg!("reader: {:?}", &reader);
             match reader.read(key) {
                 Ok(None) => continue,
                 Ok(value) => {
+                    dbg!("君にーあえてーよかった");
                     candidate.push(value.unwrap());
                 },
                 Err(e) => {
@@ -459,7 +482,7 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
     }
 
     fn readers(&self) -> Vec<Arc<SSTableReaderManager>> {
-        self.shared_sstables.to_vec()
+        self.shared_sstables.get_all()
     }
 }
 
