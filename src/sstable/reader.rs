@@ -1,8 +1,9 @@
-use std::{fs::{File, Metadata}, io::{Read, Seek}, sync::{atomic::AtomicBool, Arc}};
+use std::{fs::{File, Metadata}, io::{Read, Seek}, sync::atomic::AtomicBool};
 
 use super::{SSTableData, SSTableIndex, Value};
 
 
+#[derive(Debug)]
 pub struct SSTableReaderManager {
     reader: SSTableReader,
     delete: AtomicBool,
@@ -17,14 +18,37 @@ impl SSTableReaderManager {
         })
     }
 
+    pub fn file(&self) -> &str {
+        &self.reader.file
+    }
+
+    pub fn read(&self, key: &str) -> Result<Option<Value>, String> {
+        self.reader.read(key)
+    }
+
+    pub fn metadata(&self) -> Result<Metadata, String> {
+        self.reader.metadata()
+    }
+
+    pub fn data(&self) -> Result<SSTableData, String> {
+        self.reader.data()
+    }
+
     pub fn delete(&self) {
         self.delete.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub fn reader(&self) -> &SSTableReader {
+        &self.reader
     }
 }
 
 impl Drop for SSTableReaderManager {
     fn drop(&mut self) {
-        if self.delete.load(std::sync::atomic::Ordering::Relaxed) {
+        let deleted = self.delete.load(std::sync::atomic::Ordering::Relaxed);
+        dbg!("SSTableReaderManager drop: deleted = {}", deleted);
+        if deleted {
             std::fs::remove_file(&self.reader.file).ok();
             std::fs::remove_file(&self.reader.index_file).ok();
         }

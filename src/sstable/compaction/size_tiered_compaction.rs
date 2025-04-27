@@ -1,9 +1,10 @@
-use std::fs;
+use std::sync::Arc;
 
+use crate::sstable::reader::SSTableReaderManager;
 use crate::sstable::SSTableData;
 use crate::sstable::SSTableWriter;
+use crate::SharedSSTableReader;
 
-use super::SSTableReader;
 use super::Compaction;
 
 #[derive(Debug, Clone)]
@@ -81,14 +82,14 @@ impl SizeTieredCompaction {
         merged
     }
 
-    fn get_interesting_bucket(&self, sstables: &Vec<SSTableReader>) -> Vec<SSTableReader> {
+    fn get_interesting_bucket(&self, sstables: &Vec<Arc<SSTableReaderManager>>) -> Vec<Arc<SSTableReaderManager>> {
         let mut buckets = Vec::new();
 
         for sstable in sstables.iter() {
             let metadata = sstable.metadata().unwrap();
             let len = metadata.len() as f64;
             
-            fn bucket_median_size(sstables: &Vec<SSTableReader>) -> f64 {
+            fn bucket_median_size(sstables: &Vec<Arc<SSTableReaderManager>>) -> f64 {
                 let sum = sstables.iter().map(|sstable| {
                     sstable.metadata().unwrap().len() as f64
                 }).sum::<f64>();
@@ -124,15 +125,16 @@ impl SizeTieredCompaction {
 impl Compaction for SizeTieredCompaction {
     fn compact(
         &self, 
-        sstables: Vec<SSTableReader>, 
+        shared: Arc<SharedSSTableReader>, 
         writer: SSTableWriter
     ) -> Result<(), String> {
-        let mut sstables = sstables;
-        sstables.sort_by(|a, b| {
-            a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
-        });
+        // let mut sstables = sstables;
+        // sstables.sort_by(|a, b| {
+        //     a.metadata().unwrap().len().cmp(&b.metadata().unwrap().len())
+        // });
 
-        let interestings = self.get_interesting_bucket(&sstables);
+        let vec = shared.to_vec();
+        let interestings = self.get_interesting_bucket(&vec);
         let interestings_data = interestings
             .iter()
             .map(|sstable| sstable.data().unwrap())
@@ -146,8 +148,7 @@ impl Compaction for SizeTieredCompaction {
 
         writer.write_with_index(&compacted, self.index_interval)?;
         interestings.iter().for_each(|sstable| {
-            fs::remove_file(&sstable.file).map_err(|e| e.to_string()).unwrap();
-            fs::remove_file(&sstable.index_file).map_err(|e| e.to_string()).unwrap();
+            sstable.delete();
         });
         Ok(())
     }

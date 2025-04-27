@@ -1,11 +1,15 @@
-pub mod leveled_compaction;
+// pub mod leveled_compaction;
 pub mod size_tiered_compaction;
 
-use super::{SSTableReader, SSTableWriter};
+use std::sync::Arc;
+
+use crate::SharedSSTableReader;
+
+use super::SSTableWriter;
 
 pub trait Compaction {
     fn compact(
         &self, 
-        sstables: Vec<SSTableReader>, 
+        sstables: Arc<SharedSSTableReader>, 
         writer: SSTableWriter) -> Result<(), String>;
 }

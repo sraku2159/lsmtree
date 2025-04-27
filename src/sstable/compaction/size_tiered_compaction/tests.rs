@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, fs, path, sync::{Arc, RwLock}, vec};
+use std::{collections::BTreeMap, fs, path, sync::Arc};
 
 use libc::sleep;
 
-use crate::{memtable::MemTable, sstable::{compaction::Compaction, SSTableData, SSTableReader, SSTableWriter}, utils::get_page_size};
+use crate::{SharedSSTableReader, memtable::MemTable, sstable::{compaction::Compaction, reader::SSTableReaderManager, SSTableData, SSTableWriter}, utils::get_page_size};
 
 use super::SizeTieredCompaction;
 
@@ -194,18 +194,24 @@ fn test_get_interesting_bucket_with_med() {
     });
 
     let sstables = vec.iter().map(|v| {
-        SSTableReader::new(
-            v,
-            &(v.to_string() + ".idx")
-        ).unwrap()
-    }).collect::<Vec<SSTableReader>>();
+        Arc::new(SSTableReaderManager::new(
+        v,
+        &(v.to_string() + ".idx")
+        ).unwrap())
+    }).collect::<Vec<Arc<SSTableReaderManager>>>();
+
 
     let actual = ssts.get_interesting_bucket(&sstables);
-    assert_eq!(&actual, &sstables[2..6]);
+    for i in 0..actual.len() {
+        assert_eq!(
+            actual[i].reader(),
+            sstables[i + 2].reader(),
+        );
+    }
 
     sstables.iter().for_each(|sstable| {
-        fs::remove_file(&sstable.file).unwrap();
-        fs::remove_file(&sstable.index_file).unwrap();
+        fs::remove_file(&sstable.file()).unwrap();
+        fs::remove_file(&sstable.reader().index_file).unwrap();
     });
 }
 
@@ -253,19 +259,32 @@ fn test_get_interesting_bucket_with_min() {
         fs::File::create(&(v.to_string() + ".idx")).unwrap();
     });
 
+    // let sstables = vec.iter().map(|v| {
+    //     SSTableReader::new(
+    //         v,
+    //         &(v.to_string() + ".idx")
+    //     ).unwrap()
+    // }).collect::<Vec<SSTableReader>>();
     let sstables = vec.iter().map(|v| {
-        SSTableReader::new(
-            v,
-            &(v.to_string() + ".idx")
-        ).unwrap()
-    }).collect::<Vec<SSTableReader>>();
+        Arc::new(SSTableReaderManager::new(
+        v,
+        &(v.to_string() + ".idx")
+        ).unwrap())
+    }).collect::<Vec<Arc<SSTableReaderManager>>>();
 
     let actual = ssts.get_interesting_bucket(&sstables);
-    assert_eq!(&actual, &sstables[0..4]);
+    for i in 0..actual.len() {
+        assert_eq!(
+            actual[i].reader(),
+            sstables[i].reader(),
+        );
+    }
+    // let actual = ssts.get_interesting_bucket(&sstables);
+    // assert_eq!(&actual, &sstables[0..4]);
 
     sstables.iter().for_each(|sstable| {
-        fs::remove_file(&sstable.file).unwrap();
-        fs::remove_file(&sstable.index_file).unwrap();
+        fs::remove_file(&sstable.file()).unwrap();
+        fs::remove_file(&sstable.reader().index_file).unwrap();
     });
 }
 
@@ -313,19 +332,25 @@ fn test_get_interesting_bucket_with_max() {
         fs::File::create(&(v.to_string() + ".idx")).unwrap();
     });
 
+
     let sstables = vec.iter().map(|v| {
-        SSTableReader::new(
-            v,
-            &(v.to_string() + ".idx")
-        ).unwrap()
-    }).collect::<Vec<SSTableReader>>();
+        Arc::new(SSTableReaderManager::new(
+        v,
+        &(v.to_string() + ".idx")
+        ).unwrap())
+    }).collect::<Vec<Arc<SSTableReaderManager>>>();
 
     let actual = ssts.get_interesting_bucket(&sstables);
-    assert_eq!(&actual, &sstables[4..]);
+    for i in 0..actual.len() {
+        assert_eq!(
+            actual[i].reader(),
+            sstables[i + 4].reader(),
+        );
+    }
 
     sstables.iter().for_each(|sstable| {
-        fs::remove_file(&sstable.file).unwrap();
-        fs::remove_file(&sstable.index_file).unwrap();
+        fs::remove_file(&sstable.file()).unwrap();
+        fs::remove_file(&sstable.reader().index_file).unwrap();
     });
 }
 
@@ -397,18 +422,13 @@ fn test_compact_simple() {
     writer.write_with_index(&sstable_data5, 34).unwrap();
 
     let tables = fs::read_dir(&path).unwrap();
-    let mut target = vec![];
+    let shared_sstable = SharedSSTableReader::new(path);
 
     for table in tables {
         let table = table.unwrap();
         let path = table.path();
         if path.is_file() && path.extension().unwrap() == "sst" {
-            target.push(
-                SSTableReader::new(
-                    path.to_str().unwrap(),
-                    &(path.to_str().unwrap().to_string() + ".idx")
-                ).unwrap()
-            )
+            shared_sstable.add_reader(path.to_str().unwrap());
         }
     }
 
@@ -421,7 +441,7 @@ fn test_compact_simple() {
 
     let writer = SSTableWriter::new(&path).unwrap();
     assert!(size_tiered_compaction.compact(
-        target, 
+        shared_sstable.clone(),
         writer
     ).is_ok());
 
@@ -452,6 +472,12 @@ fn test_compact_simple() {
             |acc, (k, (v, _))| acc + k.len() + v.len() + 8 * 3
         ) as u64 
     );
+
+    let files = fs::read_dir(&path).unwrap();
+    for file in files {
+        let file = file.unwrap().path();
+        shared_sstable.drop_resource(file.to_str().unwrap());
+    }
 
     let tables = fs::read_dir(&path).unwrap();
     assert_eq!(

@@ -1,6 +1,6 @@
-use std::fs::{read_dir, DirEntry};
+use std::{fs::{read_dir, DirEntry}, sync::Arc};
 
-use lsmtree::{sstable::{compaction::{size_tiered_compaction::SizeTieredCompaction, Compaction}, SSTableReader, SSTableWriter}, utils::get_page_size, LSMTree, LSMTreeConf};
+use lsmtree::{sstable::{compaction::{size_tiered_compaction::SizeTieredCompaction, Compaction}, SSTableWriter}, utils::get_page_size, LSMTree, LSMTreeConf, SharedSSTableReader};
 
 #[derive(Debug, Clone)]
 pub struct MockCompaction {}
@@ -8,7 +8,7 @@ pub struct MockCompaction {}
 impl Compaction for MockCompaction {
     fn compact(
         &self,
-        sstables: Vec<SSTableReader>,
+        sstables: Arc<SharedSSTableReader>,
         writer: SSTableWriter) -> Result<(), String> {
         let _ = sstables;
         let _ = writer;
@@ -42,7 +42,6 @@ fn test_put_big_quantity() {
             None,
             Some(index_interval),
             Some("idx".to_owned()),
-            Some(300),         // コンパクション間隔: 5分（テストでは使用されない）
             Some(false),       // コンパクションを無効化
     )).unwrap();
     /*
@@ -88,7 +87,6 @@ fn test_put_big_quantity_with_sized_tiered() {
             None,
             Some(index_interval),
             Some("idx".to_owned()),
-            Some(5),
             Some(true),
     )).unwrap();
     /*
