@@ -1,6 +1,36 @@
-use std::{fs::{File, Metadata}, io::{Read, Seek}};
+use std::{fs::{File, Metadata}, io::{Read, Seek}, sync::{atomic::AtomicBool, Arc}};
 
 use super::{SSTableData, SSTableIndex, Value};
+
+
+pub struct SSTableReaderManager {
+    reader: SSTableReader,
+    delete: AtomicBool,
+}
+
+impl SSTableReaderManager {
+    pub fn new(file: &str, index_file: &str) -> Result<Arc<SSTableReaderManager>, String> {
+        let reader = SSTableReader::new(file, index_file)?;
+        Ok(Arc::new(SSTableReaderManager {
+            reader,
+            delete: AtomicBool::new(false),
+        }))
+    }
+
+    pub fn delete(&self) {
+        self.delete.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for SSTableReaderManager {
+    fn drop(&mut self) {
+        if self.delete.load(std::sync::atomic::Ordering::Relaxed) {
+            std::fs::remove_file(&self.reader.file).ok();
+            std::fs::remove_file(&self.reader.index_file).ok();
+        }
+    }
+}
+
 
 type Offset = usize;
 
