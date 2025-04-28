@@ -462,7 +462,8 @@ fn test_sst_records_get_deleted_key() {
     let data = SSTableData::try_from(vec![
         1u64.to_ne_bytes().to_vec(), // key_len: 1
         "a".as_bytes().to_vec(), // key: "a"
-        0u64.to_ne_bytes().to_vec(), // value_len: 0
+        1u64.to_ne_bytes().to_vec(), // value_len: 1
+        "\0".as_bytes().to_vec(), // value: "1"
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat()).unwrap();
 
@@ -572,10 +573,11 @@ fn test_sst_record_decode_deleted() {
     let encoded = vec![
         1u64.to_ne_bytes().to_vec(), // key_len: 1
         "a".as_bytes().to_vec(), // key: "a"
-        0u64.to_ne_bytes().to_vec(), // value_len: 0
+        1u64.to_ne_bytes().to_vec(), // value_len: 1
+        "\0".as_bytes().to_vec(), // value: "1"
         timestamp.to_ne_bytes().to_vec(), // タイムスタンプ
     ].concat();
     let decoded = SSTableRecord::decode(&encoded).unwrap();
     assert_eq!(decoded.0, SSTableRecord("a".to_owned(), (None, timestamp)));
-    assert_eq!(decoded.1, 25);
+    assert_eq!(decoded.1, 26);
 }

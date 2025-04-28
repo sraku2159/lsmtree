@@ -86,10 +86,18 @@ fn test_mt_encode() {
     let encoded = memtable.encode();
     
     // 削除後のエンコードも検証
-    assert_eq!(&encoded[0..25], &[
+    // assert_eq!(&encoded[0..25], &[
+    //     1u64.to_ne_bytes().to_vec(), // key_len: 1
+    //     "1".as_bytes().to_vec(),                        // key: "1"
+    //     0u64.to_ne_bytes().to_vec(), // value_len: 0
+    //     (timestamp + 1).to_ne_bytes().to_vec(), // timestamp: 8 bytes
+    // ].concat());
+
+    assert_eq!(&encoded[0..26], &[
         1u64.to_ne_bytes().to_vec(), // key_len: 1
         "1".as_bytes().to_vec(),                        // key: "1"
-        0u64.to_ne_bytes().to_vec(), // value_len: 0
+        1u64.to_ne_bytes().to_vec(), // value_len: 0
+        0u8.to_ne_bytes().to_vec(), // value: 0
         (timestamp + 1).to_ne_bytes().to_vec(), // timestamp: 8 bytes
     ].concat());
 }

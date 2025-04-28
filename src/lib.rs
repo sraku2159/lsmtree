@@ -52,14 +52,17 @@ impl SharedSSTableReader {
         }
     }
 
-    pub fn get_reader(self: &Arc<Self>, file: &str) -> Arc<SSTableReaderManager> {
+    pub fn get_reader(self: &Arc<Self>, file: &str) -> Option<Arc<SSTableReaderManager>> {
         let inner = self.inner.lock().unwrap();
         let resource = inner.get(file);
         if let Some(resource) = resource {
-            return resource.clone();
+            if resource.is_deleted() {
+                return None;
+            }
+            return Some(resource.clone());
         }
         drop(inner);
-        self.add_reader(file)
+        Some(self.add_reader(file))
     }
 
     pub fn get_all(self: &Arc<Self>) -> Vec<Arc<SSTableReaderManager>> {
@@ -73,8 +76,11 @@ impl SharedSSTableReader {
                 if file_name.ends_with(".sst") {
                     let idx_file_name = format!("{}.{}", file_name, self.index_file_suffix);
                     let idx_path = path.with_file_name(idx_file_name);
-                    if idx_path.exists() {
-                        result.push(self.get_reader(path.to_str().unwrap()));
+                    if !idx_path.exists() {
+                        continue;
+                    }
+                    if let Some(reader) = self.get_reader(path.to_str().unwrap()) {
+                        result.push(reader.clone());
                     }
                 }
             }
@@ -323,20 +329,14 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         if let Some((memtable, commitlog)) = ret {
             let dir = self.sst_dir.clone();
             let index_interval = self.index_interval.clone();
-            let rwlock = self.rwlock_for_sstable_reader.clone();
 
             self.thread_pool.execute(move || {
-                Self::flush_memtable(dir.as_ref(), memtable, commitlog, *index_interval.as_ref());
-                dbg!("ここにはきてる");
-                // let _unused = rwlock.read().unwrap();
-                match rwlock.read() {
-                    Ok(_) => {},
-                    Err(e) => {
-                        dbg!(&e);
-                        println!("err: {:?}", e);
-                    }
-                };
-                dbg!("ここにもきてる");
+                Self::flush_memtable(
+                    dir.as_ref(),
+                    memtable, 
+                    commitlog, 
+                    *index_interval.as_ref(),
+                );
             });
         }
         Ok(())
@@ -388,7 +388,12 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         )
     }
 
-    fn flush_memtable(dir: &String, memtable: MemTable, commitlog: CommitLog, index_interval: usize) {
+    fn flush_memtable(
+        dir: &String, 
+        memtable: MemTable, 
+        commitlog: CommitLog, 
+        index_interval: usize,
+    ) {
         let sstable = SSTableWriter::new(&dir).unwrap();
         let ret = sstable.write(&memtable, index_interval);
         match ret {
@@ -428,14 +433,11 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         key: &str
     ) -> Result<Option<Value>, String> {
         let mut candidate = vec![];
-        dbg!("ここにはきてる");
         let rwlock = self.rwlock_for_sstable_reader.read().map_err(|e| e.to_string())?;
         for reader in self.readers() {
-            dbg!("reader: {:?}", &reader);
             match reader.read(key) {
                 Ok(None) => continue,
                 Ok(value) => {
-                    dbg!("君にーあえてーよかった");
                     candidate.push(value.unwrap());
                 },
                 Err(e) => {
@@ -460,6 +462,8 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
             }
             std::cmp::Ordering::Less
         });
+        let last = candidate.last().unwrap();
+        dbg!(last);
         Ok(candidate.last().unwrap().0.clone())
     }
 

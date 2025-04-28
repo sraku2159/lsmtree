@@ -111,3 +111,27 @@ fn test_put_big_quantity_with_sized_tiered() {
 
     tear_down(&sst_dir, &commitlog_dir);
 }
+
+#[test]
+fn test_put_key4503() {
+    let sst_dir = "./.test_put_key4503_sst";
+    let commitlog_dir = "./.test_put_key4503_commitlog";
+    let index_interval = lsmtree::utils::get_page_size();
+    let mut lsm_tree = LSMTree::new(
+        LSMTreeConf::new(
+            SizeTieredCompaction::new(
+                get_page_size(),
+                Some(0.5),
+                Some(1.5),
+                Some(4),
+            ),
+            MockTimeStampGenerator{},
+            Some(sst_dir.to_owned()),
+            Some(commitlog_dir.to_owned()),
+            None,
+            Some(index_interval),
+            Some("idx".to_owned()),
+            Some(true),
+    )).unwrap();
+    lsm_tree.put("key4503", Some(&"a".repeat(4503 + (104856 / 3)))).unwrap();
+}

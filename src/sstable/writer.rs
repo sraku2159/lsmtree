@@ -30,7 +30,7 @@ impl SSTableWriter {
         let mut index_file = File::create(index_file).map_err(|e| e.to_string())?;
         let data = SSTableData::try_from(memtable.encode())?;
         let index = SSTableIndex::from_sstable_data(&data, index_interval as u64);
-        // let data = SSTableData::try_from(memtable.encode())?;
+        let data = SSTableData::try_from(memtable.encode())?;
         Self::write_data_impl(&mut file, &data)?;
         Self::write_index_impl(&mut index_file, &index)
     }

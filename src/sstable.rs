@@ -517,23 +517,33 @@ impl SSTableRecord {
     }
 
     fn decode(data: &[u8]) -> Result<(SSTableRecord, usize), String> {
-        let key_len = u64::from_ne_bytes(data[0..8]
-            .try_into()
-            .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
-        let key = String::from_utf8(data[8..(8 + key_len as usize)].to_vec())
-            .map_err(|e| e.to_string())?;
-        let value_len = u64::from_ne_bytes(data[(8 + key_len as usize)..(16 + key_len as usize)]
-            .try_into()
-            .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
-        let value = String::from_utf8(data[(16 + key_len as usize)..(16 + key_len as usize + value_len as usize)].to_vec())
-            .map(|s| {
-                if s == "" {
-                    None
-                } else {
-                    Some(s)
-                }
-            })
-            .map_err(|e| e.to_string())?;
+        let key_len = u64::from_ne_bytes(
+                data.get(0..8)
+                    .ok_or("key_len is not found")?
+                    .try_into()
+                    .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+        let key = String::from_utf8(
+                data.get(8..(8 + key_len as usize))
+                    .ok_or("key is not found")?
+                    .to_vec())
+                    .map_err(|e| e.to_string())?;
+        let value_len = u64::from_ne_bytes(
+                data.get((8 + key_len as usize)..(16 + key_len as usize))
+                    .ok_or("value_len is not found")?
+                    .try_into()
+                    .map_err(|e: std::array::TryFromSliceError| e.to_string())?);
+        let value = String::from_utf8(
+                data.get((16 + key_len as usize)..(16 + key_len as usize + value_len as usize))
+                    .ok_or("value is not found")?
+                    .to_vec())
+                    .map(|s| {
+                        if &s == "\0" {
+                            None
+                        } else {
+                            Some(s)
+                        }
+                    })
+                    .map_err(|e| e.to_string())?;
         
         // タイムスタンプを最後から読み込む
         let timestamp_start = 16 + key_len as usize + value_len as usize;

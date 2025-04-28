@@ -35,7 +35,11 @@ impl SSTableReaderManager {
     }
 
     pub fn delete(&self) {
-        self.delete.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.delete.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.delete.load(std::sync::atomic::Ordering::Acquire)
     }
 
     #[cfg(test)]
@@ -46,8 +50,8 @@ impl SSTableReaderManager {
 
 impl Drop for SSTableReaderManager {
     fn drop(&mut self) {
-        let deleted = self.delete.load(std::sync::atomic::Ordering::Relaxed);
-        dbg!("SSTableReaderManager drop: deleted = {}", deleted);
+        let deleted = self.delete.load(std::sync::atomic::Ordering::Acquire);
+        // dbg!("SSTableReaderManager drop: deleted = {}", deleted);
         if deleted {
             std::fs::remove_file(&self.reader.file).ok();
             std::fs::remove_file(&self.reader.index_file).ok();
@@ -97,7 +101,11 @@ impl SSTableReader {
         let mut f = File::open(&self.file).map_err(|e| e.to_string())?;
         let mut buf = vec![];
         f.read_to_end(buf.as_mut()).map_err(|e| e.to_string())?;
-        let data = SSTableData::decode(&buf).map_err(|e| e.to_string())?;
+        let data = SSTableData::decode(&buf).map_err(|e| e.to_string());
+        if let Err(e) = data {
+            return Err(format!("read_data error: {} in {}", e, self.file));
+        }
+        let data = data.unwrap();
         Ok(data)
     }
 
@@ -147,8 +155,17 @@ impl SSTableReader {
         let mut buf = vec![0u8; (end - begin) as usize];
         f.seek(std::io::SeekFrom::Start(begin)).map_err(|e| e.to_string())?;
         let _ = f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-        let data = SSTableData::decode(&buf).map_err(|e| e.to_string())?;
-        Ok(data)
+        let data = SSTableData::decode(&buf).map_err(|e| e.to_string());
+        match data {
+            Err(e) => {
+                return Err(format!("read_data error: {} in {}", e, file));
+            }
+            Ok(data) => {
+                // println!("read_data: {:?}", data);
+                Ok(data)
+            }
+            
+        }
     }
 }
 
@@ -251,7 +268,7 @@ mod tests{
         let timestamp = 12345u64; // テスト用の固定タイムスタンプ
         let data = kvs.iter().map(|(k, v)| {
             let k = k.as_bytes();
-            let v = v.as_ref().map_or("".as_bytes(), |v| v.as_bytes());
+            let v = v.as_ref().map_or("\0".as_bytes(), |v| v.as_bytes());
             let k_len = k.len() as u64;
             let v_len = v.len() as u64;
             vec![

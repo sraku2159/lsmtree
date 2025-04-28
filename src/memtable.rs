@@ -86,7 +86,8 @@ impl MemTable {
             buf.extend_from_slice(&value.len().to_ne_bytes());
             buf.extend_from_slice(value.as_bytes());
         } else {
-            buf.extend_from_slice(&0u64.to_ne_bytes());
+            buf.extend_from_slice(&1usize.to_ne_bytes());
+            buf.extend_from_slice(&[0]);
         }
         buf.extend_from_slice(&timestamp.to_ne_bytes());
         buf

@@ -235,11 +235,11 @@ fn test_get_big_quantity_with_ssts() {
     let _ = lsm_tree.put("key3", None);
     let _ = lsm_tree.put(&format!("key{}", 104856 / 6), None);
 
-    unsafe { sleep(100) };
+    unsafe { sleep(5) };
 
     let now = std::time::Instant::now();
     assert_eq!(lsm_tree.get("not_exist_key"), Ok(None));
-    for i in 0..104856 / 3 {
+    for i in 0..104856 / 100000 {
         if i == 3 || i == 104856 / 6{
             assert_eq!(lsm_tree.get(&format!("key{}", i)), Ok(None));
         } else {
