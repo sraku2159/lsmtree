@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, thread, time::Duration};
 
 use crate::{memtable::MemTable, utils};
 
@@ -22,6 +22,7 @@ impl SSTableWriter {
     }
 
     pub fn write(&self, memtable: &MemTable, index_interval: usize) -> Result<(), String> {
+        thread::sleep(Duration::from_millis(1));
         Self::write_impl(memtable, &self.file, &self.index_file, index_interval)
     }
 
@@ -58,9 +59,9 @@ impl SSTableWriter {
         file.write_all(&mut index).map_err(|e| e.to_string())
     }
 
-    // ページサイズごとに書き込むという方法との比較を時間計算量の観点で今後したい
     fn write_data_impl(file: &mut File, data: &SSTableData) -> Result<(), String> {
         let mut data =  data.encode().clone();
+        dbg!(&data[&data.len() - 10..]);
         file.write_all(&mut data).map_err(|e| e.to_string())
     }
 }
@@ -184,11 +185,36 @@ mod tests {
         expected_data.extend_from_slice("value1".as_bytes()); // value: "value1"
         expected_data.extend_from_slice(&timestamp.to_ne_bytes()); // タイムスタンプ
         
-        // タイムスタンプは動的に生成されるため、長さのみを検証
-        assert_eq!(content.len(), expected_data.len());
-        
         // タイムスタンプ以外の部分を検証
-        assert_eq!(&content[0..28], &expected_data[0..28]);
+        assert_eq!(&content, &expected_data);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_sst_writer_wirte_data_impl_deleted() {
+        let timestamp = crate::utils::get_timestamp() as u64; // 実際のタイムスタンプ
+        let mut memtable = MemTable::new();
+        memtable.delete("key1", timestamp);
+        let path = "/tmp/test_sst_writer_wirte_data_impl_deleted.sst";
+        let mut file = File::create(path).unwrap();
+        let data = SSTableData::try_from(memtable.encode()).unwrap();
+        assert!(SSTableWriter::write_data_impl(&mut file, &data).is_ok());
+    
+        // バイナリデータを含むため、read_to_stringではなくreadを使用
+        let content = fs::read(path).unwrap();
+        
+        // タイムスタンプを含むデータ形式に更新
+        let mut expected_data = Vec::new();
+        expected_data.extend_from_slice(&4u64.to_ne_bytes()); // key_len: 4
+        expected_data.extend_from_slice("key1".as_bytes()); // key: "key1"
+        expected_data.extend_from_slice(&1u64.to_ne_bytes()); // value_len: 1
+        expected_data.extend_from_slice("\0".as_bytes()); // value: "\0"
+        expected_data.extend_from_slice(&timestamp.to_ne_bytes()); // タイムスタンプ
+        
+        assert_eq!(expected_data, memtable.encode());
+        
+        assert_eq!(&content, &expected_data);
+        
         fs::remove_file(path).unwrap();
     }
 }

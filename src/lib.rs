@@ -166,7 +166,6 @@ where
     T: Compaction,
     U: TimeStampGenerator,
 {
-    // memtable: Arc<Mutex<MemTable>>,
     memtable: Mutex<MemTable>,
     commitlog: Mutex<CommitLog>,
     memtable_threshold: usize,
@@ -219,27 +218,20 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
 
     fn start_compaction_thread(
         sst_dir: Arc<String>,
-        // sstables: &Arc<Vec<SSTableReader>>,
         compaction: T,
         rwlock_for_sstable_reader: Arc<RwLock<()>>,
         shared_sstable: Arc<SharedSSTableReader>,
     ) -> thread::JoinHandle<()> {
         let sst_dir = sst_dir.clone();
-        // let sstables = sstables.clone();
         let rwl = rwlock_for_sstable_reader.clone();
 
         spawn(move || {
             loop {
-                // thread::park();
-                // println!("compaction started with {:?}", sstables);
-                // let sstables = sstables.to_vec();
                 sleep(std::time::Duration::from_secs(1));
                 
                 match SSTableWriter::new(&sst_dir) {
                     Ok(writer) => {
-                        dbg!("ここにはきてる");
                         let _unused = rwl.write().unwrap();
-                        dbg!("ここにもきてる");
                         match compaction.compact(
                             shared_sstable.clone(),
                             writer
@@ -253,57 +245,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
             }
         })
     }
-
-    // fn get_sstables_for_compaction(dir: &str, idx_file_suffix: &str) -> Vec<SSTableReader> {
-    //     let mut sstables = Vec::new();
-        
-    //     let dir_entries = match std::fs::read_dir(dir) {
-    //         Ok(entries) => entries,
-    //         Err(e) => {
-    //             eprintln!("ERROR: Failed to read directory {}: {}", dir, e);
-    //             return sstables;
-    //         }
-    //     };
-        
-    //     for entry_result in dir_entries {
-    //         let entry = match entry_result {
-    //             Ok(e) => e,
-    //             Err(_) => continue,
-    //         };
-            
-    //         let path = entry.path();
-            
-    //         if !path.is_file() {
-    //             continue;
-    //         }
-            
-    //         let file_name = match path.file_name().and_then(|n| n.to_str()) {
-    //             Some(name) => name,
-    //             None => continue,
-    //         };
-            
-    //         if !file_name.ends_with(".sst") {
-    //             continue;
-    //         }
-            
-    //         let idx_file_name = format!("{}.{}", file_name, idx_file_suffix);
-    //         let idx_path = path.with_file_name(idx_file_name);
-            
-    //         if !idx_path.exists() {
-    //             continue;
-    //         }
-            
-    //         match SSTableReader::new(
-    //             path.to_str().unwrap(), 
-    //             idx_path.to_str().unwrap()
-    //         ) {
-    //             Ok(reader) => sstables.push(reader),
-    //             Err(_) => continue,
-    //         }
-    //     }
-        
-    //     sstables
-    // }
 
     fn create_dir(path: &str) -> Result<(), String> {
         match std::fs::metadata(path).map(|m| m.is_dir()){
@@ -373,7 +314,6 @@ impl<T: Compaction + Clone + Send + Sync + 'static, U: TimeStampGenerator +  Sen
         Ok(ret)
     }
 
-    // 手動でコンパクションを実行するためのメソッド（テスト用）
     pub fn launch_compaction(&self) -> Result<(), String> {
         // let sstables: Vec<SSTableReader> = self.reader_iter().collect();
         let sstables = self.shared_sstables.to_vec();
@@ -500,81 +440,3 @@ impl TimeStampGenerator for DefaultTimeStampGenerator {
         utils::get_timestamp()
     }
 }
-
-// struct SSTableReaderIter {
-//     sstables: Vec<SSTableReader>,
-//     rwlock: Arc<RwLock<()>>,
-//     index: usize,
-// }
-
-// impl SSTableReaderIter {
-//     fn new(
-//         root_dir: & String,
-//         idx_file_suffix: & String,
-//         rwlock: Arc<RwLock<()>>,
-//     ) -> SSTableReaderIter {
-//         let sstables = Self::get_sstables(
-//             root_dir, 
-//             idx_file_suffix,
-//             rwlock.clone(),
-//         );
-//         SSTableReaderIter {
-//             sstables,
-//             rwlock,
-//             index: 0,
-//         }
-//     }
-
-//     fn get_sstables(
-//         root_dir: & String,
-//         idx_file_suffix: & String,
-//         rwlock: Arc<RwLock<()>>
-//     ) -> Vec<SSTableReader> {
-//         let mut sstables = Vec::new();
-//         dbg!("ここにはきてる");
-//         let _unused = rwlock.read().unwrap();
-//         dbg!("ここにもきてる");
-//         let dir = std::fs::read_dir(root_dir).unwrap();
-//         for entry in dir {
-//             let entry = entry.unwrap();
-//             let path = entry.path();
-//             if path.is_file() {
-//                 let file_name = path.file_name().unwrap().to_str().unwrap();
-//                 if file_name.ends_with(".sst") {
-//                     let idx_file_name = format!("{}.{}", file_name, idx_file_suffix);
-//                     let idx_path = path.with_file_name(idx_file_name);
-//                     if idx_path.exists() {
-//                         let reader = SSTableReader::new(
-//                             path.to_str().unwrap(), 
-//                             idx_path.to_str().unwrap()).unwrap();
-//                         sstables.push(reader);
-//                     }
-//                 }
-//             }
-//         }
-//         sstables
-//     }
-// }
-
-// impl Iterator for SSTableReaderIter {
-//     type Item = SSTableReader;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.index >= self.sstables.len() {
-//             return None;
-//         }
-//         dbg!("ここにはきてる", self.index);
-//         let _unused = self.rwlock.read().unwrap();
-//         dbg!("ここにもきてる", self.index);
-//         let mut reader = self.sstables.get(self.index);
-//         while reader.is_none() {
-//             if self.index >= self.sstables.len() {
-//                 return None;
-//             }
-//             reader = self.sstables.get(self.index);
-//         }
-//         let reader = reader.unwrap();
-//         self.index += 1;
-//         Some(reader.clone())
-//     }
-// }

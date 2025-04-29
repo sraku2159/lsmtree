@@ -547,7 +547,8 @@ fn test_sst_record_encode_deleted() {
     let mut buf = Vec::new();
     buf.extend_from_slice(&1u64.to_ne_bytes());
     buf.extend_from_slice("a".as_bytes());
-    buf.extend_from_slice(&0u64.to_ne_bytes());
+    buf.extend_from_slice(&1u64.to_ne_bytes());
+    buf.extend_from_slice("\0".as_bytes());
     buf.extend_from_slice(&timestamp.to_ne_bytes());
     assert_eq!(encoded, buf);
 }

@@ -503,7 +503,7 @@ impl SSTableRecord {
     }
 
     fn encode(&self) -> Vec<u8> {
-        let default_value = "".to_owned();
+        let default_value = "\0".to_owned();
         let value = self.value().0.as_ref().unwrap_or(&default_value);
         let mut buf = Vec::new();
         // キー長、キー、値長、値、タイムスタンプの順に書き込む
@@ -526,7 +526,7 @@ impl SSTableRecord {
                 data.get(8..(8 + key_len as usize))
                     .ok_or("key is not found")?
                     .to_vec())
-                    .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?;
         let value_len = u64::from_ne_bytes(
                 data.get((8 + key_len as usize)..(16 + key_len as usize))
                     .ok_or("value_len is not found")?
@@ -536,14 +536,14 @@ impl SSTableRecord {
                 data.get((16 + key_len as usize)..(16 + key_len as usize + value_len as usize))
                     .ok_or("value is not found")?
                     .to_vec())
-                    .map(|s| {
-                        if &s == "\0" {
-                            None
-                        } else {
-                            Some(s)
-                        }
-                    })
-                    .map_err(|e| e.to_string())?;
+                .map(|s| {
+                    if &s == "\0" {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                })
+            .map_err(|e| e.to_string())?;
         
         // タイムスタンプを最後から読み込む
         let timestamp_start = 16 + key_len as usize + value_len as usize;

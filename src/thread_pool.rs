@@ -12,7 +12,6 @@ pub struct ThreadPool {
 
 #[derive(Debug)]
 struct Worker {
-    id: usize,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -74,7 +73,6 @@ impl Worker {
         });
 
         Worker {
-            id,
             thread: Some(thread),
         }
     }
